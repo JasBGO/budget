@@ -134,6 +134,7 @@ async function updateBadge() {
 async function lockNow() {
   if (store.data) await vault.flush(() => store.data);
   vault.lock();
+  if (updated) return location.reload();
   showLock("unlock");
 }
 
@@ -146,7 +147,19 @@ document.addEventListener("visibilitychange", async () => {
 });
 window.addEventListener("pagehide", () => { if (store.data) vault.flush(() => store.data); });
 
-if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+// A new version takes over: reload right away on the lock screen, otherwise at the next lock.
+let updated = false;
+if ("serviceWorker" in navigator && location.protocol === "https:") {
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register("sw.js").then(reg => {
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) reg.update().catch(() => {}); });
+  }).catch(() => {});
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!hadController) return;
+    updated = true;
+    if (!store.data) location.reload();
+  });
+}
 if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
 
 vault.hasVault().then(has => showLock(has ? "unlock" : "create")).catch(() => {
