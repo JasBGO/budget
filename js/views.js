@@ -4,6 +4,7 @@ import * as A from "./analysis.js";
 import * as vault from "./vault.js";
 import * as claude from "./claude.js";
 import * as imp from "./importer.js";
+import { workbook } from "./export.js";
 import { sheet, closeSheet, confirmSheet, toast, icon, meter, levelOf, initials, renderAnswer } from "./ui.js";
 import { esc, money, todayStr, addDays, periodRange, niceDate, monthLabel, monthStart, monthEnd, addMonths, daysBetween, relDay, sum, uid, round2, parseDate, MON, DOW, saveFile, weekStart } from "./util.js";
 
@@ -948,6 +949,10 @@ export async function openSettings() {
       <p class="muted small" style="margin:0">Save an encrypted copy to Files or iCloud Drive. It opens only with your current passcode. Make one after each import.</p>
       <button class="btn primary block" id="sB">Save a backup</button>
       <label class="field"><span>Restore from a backup (replaces everything here)</span><input class="input" id="sRF" type="file" accept=".json,application/json"></label></div>
+    <div class="card"><h2>Google Sheets</h2>
+      <p class="muted small" style="margin:0">Makes a spreadsheet with tabs for transactions, monthly totals, budget, cards and bills. On your computer, upload it to Google Drive and open it with Google Sheets. Export again any time to refresh it.</p>
+      <button class="btn primary block" id="sX">${icon("chart")} Export to Google Sheets</button>
+      <p class="muted small" style="margin:0">This file is not encrypted or passcode protected. Keep it in your own Drive and don't share it.</p></div>
     <div class="card"><h2>Erase</h2><p class="muted small" style="margin:0">Deletes all your data from this phone. Type ERASE to confirm.</p><input class="input" id="sE" autocapitalize="characters"><button class="btn danger block" id="sEB">Erase everything</button></div>
     <p class="muted small" style="margin:0;text-align:center">Your data is encrypted and never leaves this phone, except the summary sent to Claude when you ask it something.</p>`, (b, close) => {
     const saveKey = () => store.update(x => { x.settings.apiKey = b.querySelector("#sK").value.trim(); x.settings.model = b.querySelector("#sM").value; });
@@ -971,6 +976,10 @@ export async function openSettings() {
     b.querySelector("#sB").onclick = async () => {
       await vault.flush(() => D());
       await saveFile("budget-backup-" + todayStr() + ".json", await vault.exportBackup(), "application/json");
+    };
+    b.querySelector("#sX").onclick = async () => {
+      try { await saveFile("budget-" + todayStr() + ".xlsx", workbook(D()), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"); }
+      catch (e) { console.error(e); toast("Couldn't make the spreadsheet"); }
     };
     b.querySelector("#sRF").onchange = e => {
       const f = e.target.files[0]; if (!f) return;
