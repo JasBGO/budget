@@ -5,7 +5,7 @@ import { icon, closeSheet, toast } from "./ui.js";
 import { views, ui, openAdd, openSettings } from "./views.js";
 
 const app = document.getElementById("app");
-const TABS = [["home", "Home", "home"], ["activity", "Activity", "list"], ["budget", "Budget", "pie"], ["cards", "Cards", "card"], ["insights", "Insights", "spark"]];
+const TABS = [["home", "Home", "home"], ["activity", "Activity", "list"], ["budget", "Budget", "pie"], ["cards", "Bills", "bill"], ["insights", "Insights", "spark"]];
 
 // ---------- lock screen ----------
 async function showLock(mode) {

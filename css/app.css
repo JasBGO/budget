@@ -13,6 +13,8 @@
   --ok: #2f8a4c;
   --warn: #b7791f;
   --over: #c0392b;
+  --needs: #0f6b5c;
+  --wants: #8d5fc9;
   --shadow: 0 1px 2px rgba(20, 32, 25, .06), 0 4px 16px rgba(20, 32, 25, .05);
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, system-ui, sans-serif;
   --display: -apple-system-headline, -apple-system, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
@@ -23,7 +25,7 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #0c1210; --surface: #151d1a; --surface-2: #1d2824; --ink: #e7eee9; --muted: #93a39a; --line: #26332e;
-    --accent: #4fc2a8; --accent-ink: #062019; --accent-soft: #173a32; --ok: #5cc27a; --warn: #e2a64a; --over: #f07263;
+    --accent: #4fc2a8; --accent-ink: #062019; --accent-soft: #173a32; --ok: #5cc27a; --warn: #e2a64a; --over: #f07263; --needs: #4fc2a8; --wants: #b18cf0;
     --shadow: none; color-scheme: dark;
   }
 }
@@ -164,6 +166,24 @@ textarea.input { resize: vertical; min-height: 80px }
 /* charts */
 .chart svg { width: 100%; height: auto; display: block }
 .chart text { fill: var(--muted); font-size: 10px; font-family: var(--font) }
+.split { display: flex; gap: 2px; height: 14px }
+.split span { border-radius: 4px; min-width: 4px }
+.bars { display: flex; flex-direction: column; gap: 12px }
+.bar-row { display: flex; flex-direction: column; gap: 5px }
+.bar-row summary { list-style: none; cursor: pointer; display: flex; flex-direction: column; gap: 5px }
+.bar-row summary::-webkit-details-marker { display: none }
+.bar-track { position: relative; height: 8px; display: flex; gap: 2px }
+.bar-track span { height: 100%; border-radius: 4px; min-width: 3px }
+.bar-track .cut { background: repeating-linear-gradient(135deg, var(--over) 0 3px, transparent 3px 6px); opacity: .7 }
+.bar-track i { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--ink); border-radius: 1px }
+.legend i.tick { display: inline-block; width: 2px; height: 12px; background: var(--ink); vertical-align: -2px; margin-right: 2px }
+.legend i.swatch { display: inline-block; width: 14px; height: 8px; border-radius: 2px; vertical-align: 0; margin-right: 2px }
+.legend i.swatch.cut { background: repeating-linear-gradient(135deg, var(--over) 0 3px, transparent 3px 6px) }
+.legend i.swatch.dash { background: linear-gradient(90deg, var(--muted) 0 5px, transparent 5px 8px, var(--muted) 8px); height: 2px; vertical-align: 3px }
+.hero-num { display: flex; flex-direction: column; gap: 2px }
+.hero-num b { font-size: 2rem; letter-spacing: -.02em }
+.hero-num small { font-size: .9rem; font-weight: 500; color: var(--muted) }
+.chart .tip { min-height: 1.3em }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: .78rem; color: var(--muted) }
 
 /* Claude */
@@ -180,3 +200,20 @@ table { border-collapse: collapse; width: 100%; font-size: .88rem }
 td, th { padding: 7px 4px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap }
 th { font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted) }
 td.r, th.r { text-align: right }
+
+/* ---------- navigation polish ---------- */
+.card.hero { background: linear-gradient(140deg, var(--accent), color-mix(in srgb, var(--accent) 70%, #1b3d8f)); }
+.tabbar button span { line-height: 1 }
+.tabbar button svg { padding: 3px 14px; box-sizing: content-box; border-radius: 99px; transition: background .2s }
+.tabbar button[aria-current="page"] svg { background: var(--accent-soft) }
+.seg.tabs { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 6px); z-index: 5; box-shadow: var(--shadow) }
+.seg.tabs button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 4px }
+.seg.tabs button svg { width: 17px; height: 17px; flex: none }
+.quick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px }
+.quick button { border: 0; background: var(--surface); box-shadow: var(--shadow); border-radius: 14px; padding: 12px 4px 10px; display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: .74rem; font-weight: 650; color: var(--ink); line-height: 1.15; text-align: center }
+.quick button span { width: 40px; height: 40px; border-radius: 12px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center }
+.quick button svg { width: 21px; height: 21px }
+.btn svg { width: 18px; height: 18px; vertical-align: -4px; margin-right: 2px }
+.seg.range { background: none; padding: 0; gap: 6px }
+.seg.range button { border: 1px solid var(--line); padding: 5px 4px; font-size: .8rem; border-radius: 99px }
+.seg.range button[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); box-shadow: none }

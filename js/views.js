@@ -7,7 +7,7 @@ import * as imp from "./importer.js";
 import { sheet, closeSheet, confirmSheet, toast, icon, meter, levelOf, initials, renderAnswer } from "./ui.js";
 import { esc, money, todayStr, addDays, periodRange, niceDate, monthLabel, monthStart, monthEnd, addMonths, daysBetween, relDay, sum, uid, round2, parseDate, MON, DOW, saveFile, weekStart } from "./util.js";
 
-export const ui = { tab: "home", period: "day", anchor: todayStr(), acct: null, search: "", months: 3, chat: [], busy: false, budgetMonth: todayStr(), payoff: null };
+export const ui = { tab: "home", period: "day", anchor: todayStr(), acct: null, search: "", months: 3, chat: [], busy: false, budgetMonth: todayStr(), payoff: null, cardsTab: "cards", insTab: "charts" };
 const D = () => store.data;
 const emit = (name, detail) => window.dispatchEvent(new CustomEvent(name, { detail }));
 const go = tab => emit("app:go", tab);
@@ -29,6 +29,9 @@ function txnRow(t) {
 function bindTxnRows(root) {
   root.querySelectorAll("[data-txn]").forEach(b => (b.onclick = () => openTxn(D().txns.find(t => t.id === b.dataset.txn))));
 }
+// Sub-tabs inside a screen, so each page stays short.
+const subtabs = (key, list) => `<div class="seg tabs" role="tablist">${list.map(([v, l, ic]) => `<button role="tab" data-sub="${key}:${v}" aria-pressed="${ui[key] === v}">${ic ? icon(ic) : ""}${l}</button>`).join("")}</div>`;
+function bindSubtabs(root) { root.querySelectorAll("[data-sub]").forEach(b => (b.onclick = () => { const [k, v] = b.dataset.sub.split(":"); ui[k] = v; rerender(); window.scrollTo(0, 0); })); }
 const topbar = (title, kicker, actions = "") => `<div class="topbar"><div>${kicker ? `<div class="label">${esc(kicker)}</div>` : ""}<h1>${esc(title)}</h1></div><div class="actions">${actions}</div></div>`;
 
 // ====================================================== HOME
@@ -38,6 +41,7 @@ const SLOTS = [
   { key: "pc", short: "PC", name: "PC Mastercard", type: "credit", color: "#d93a2b", match: /\bpc\b|president/i, how: "pcfinancial.ca › Transactions › Download" },
   { key: "tri", short: "▲", name: "Triangle Mastercard", type: "credit", color: "#c2477a", match: /triangle|canadian tire|ctfs/i, how: "Triangle app or website › Transactions › Download" }
 ];
+const STATEMENT_TYPES = ".csv,.ofx,.qfx,.txt,text/csv,.pdf,application/pdf,image/*";
 const slotAcct = (d, sl) => d.accounts.find(a => a.slot === sl.key) || d.accounts.find(a => a.type === sl.type && sl.match.test(a.name));
 function slotsHtml(d) {
   return `<div class="card"><h2>Add a statement</h2><div class="list">${SLOTS.map(sl => {
@@ -45,17 +49,17 @@ function slotsHtml(d) {
     const last = ts.reduce((m, t) => (t.date > m ? t.date : m), "");
     return `<label class="item" style="cursor:pointer"><span class="avatar" style="background:${esc(a?.color || sl.color)};color:#fff">${sl.short}</span>
       <span class="grow"><div class="title">${esc(a?.name || sl.name)}</div><div class="sub">${last ? "Has transactions up to " + esc(niceDate(last, true)) : esc(sl.how)}</div></span>
-      <span class="btn small primary">Choose file</span><input type="file" data-slot="${sl.key}" accept=".csv,.ofx,.qfx,.txt,text/csv" hidden></label>`;
+      <span class="btn small primary">Choose file</span><input type="file" data-slot="${sl.key}" multiple accept="${STATEMENT_TYPES}" hidden></label>`;
   }).join("")}</div></div>`;
 }
 function bindSlots(root) {
   root.querySelectorAll("[data-slot]").forEach(inp => (inp.onchange = () => {
-    const f = inp.files[0], sl = SLOTS.find(x => x.key === inp.dataset.slot);
-    if (!f || !sl) return;
+    const files = [...inp.files], sl = SLOTS.find(x => x.key === inp.dataset.slot);
+    if (!files.length || !sl) return;
     let a = slotAcct(D(), sl);
     if (!a) { a = { id: uid(), name: sl.name, type: sl.type, color: sl.color, slot: sl.key }; store.update(x => { x.accounts.push(a); }); }
     else if (!a.slot) store.update(x => { const y = x.accounts.find(v => v.id === a.id); if (y) y.slot = sl.key; });
-    openImport(a.id, f);
+    openImport(a.id, files);
   }));
 }
 
@@ -93,10 +97,12 @@ const home = {
     const week = `<div class="grid2">
       <div class="stat"><span class="label">Today</span><b class="num">${money(s.spentToday)}</b><span class="small muted">${A.spendIn(d, today, today).length} purchases</span></div>
       <div class="stat"><span class="label">This week</span><b class="num">${money(wSpent)}</b><span class="small ${wBudget && wSpent > wBudget ? "over" : "muted"}">${wBudget ? (wSpent > wBudget ? money(wSpent - wBudget, 0) + " over" : money(wBudget - wSpent, 0) + " left") : "no budget"}</span></div></div>`;
+    const quick = `<div class="quick">${[["import", "upload", "Add statement"], ["pay", "card", "Pay a card"], ["bill", "bill", "Add a bill"], ["claude", "chat", "Ask Claude"]]
+      .map(([k, ic, l]) => `<button data-quick="${k}"><span>${icon(ic)}</span>${l}</button>`).join("")}</div>`;
     const goals = d.goals.length ? `<div class="card"><div class="row"><h2>Savings goals</h2><button class="link" data-to="budget">All</button></div>${d.goals.slice(0, 3).map(g => `
       <div class="stack" style="gap:4px"><div class="row small"><b>${esc(g.name)}</b><span class="num">${money(+g.saved || 0, 0)} of ${money(+g.target || 0, 0)}</span></div>${meter((+g.saved || 0) / (+g.target || 1), "")}</div>`).join("")}</div>` : "";
     return topbar("Hi Jas", niceDate(today), `<button class="icon-btn" data-act="lock" aria-label="Lock">${icon("lock")}</button><button class="icon-btn" data-act="settings" aria-label="Settings">${icon("gear")}</button>`)
-      + setup + hero + alertsHtml + slotsHtml(d) + week + upHtml
+      + setup + hero + quick + alertsHtml + upHtml + week + slotsHtml(d)
       + `<div class="card"><div class="row"><h2>Recent</h2><button class="link" data-to="activity">See all</button></div><div class="list">${recent.length ? recent.map(txnRow).join("") : `<div class="empty">No transactions yet. Import a statement or tap + to log a purchase.</div>`}</div></div>`
       + goals;
   },
@@ -105,13 +111,24 @@ const home = {
       const to = b.dataset.to;
       if (to === "import") openImport(); else if (to === "settings") openSettings(); else go(to);
     }));
+    root.querySelectorAll("[data-quick]").forEach(b => (b.onclick = () => {
+      const k = b.dataset.quick;
+      if (k === "import") openImport();
+      else if (k === "pay") { ui.cardsTab = "cards"; go("cards"); }
+      else if (k === "bill") openBill(null);
+      else { ui.insTab = "claude"; go("insights"); }
+    }));
     root.querySelector("[data-act=lock]").onclick = () => emit("app:lock");
     root.querySelector("[data-act=settings]").onclick = () => openSettings();
     root.querySelectorAll("[data-paid]").forEach(b => (b.onclick = () => {
       const [kind, id, month] = b.dataset.paid.split(":");
       store.update(d => {
         const x = (kind === "bill" ? d.bills : d.accounts).find(v => v.id === id);
-        if (x && kind === "statement") x.paidDownFor = month; else if (x) x.paidFor = month;
+        if (x && kind === "statement") x.paidDownFor = month;
+        else if (x) {
+          if (x.type === "plan" && x.paidFor !== month && +x.paymentsLeft > 0) x.paymentsLeft = +x.paymentsLeft - 1;
+          x.paidFor = month;
+        }
       });
       toast("Marked as paid");
     }));
@@ -239,14 +256,15 @@ const cards = {
   html() {
     const d = D();
     const credit = d.accounts.filter(a => a.type === "credit");
-    const accts = d.accounts.map(a => {
+    const acctRow = a => {
       const util = a.type === "credit" && +a.limit ? (+a.balance || 0) / +a.limit : null;
       const lv = util == null ? "" : util >= .5 ? "over" : util >= .3 ? "warn" : "ok";
       return `<button class="item" data-acct="${esc(a.id)}"><span class="avatar" style="background:${esc(a.color || "#5b6a62")}">${esc(initials(a.name))}</span>
         <span class="grow"><div class="title">${esc(a.name)}</div><div class="sub">${a.type === "credit" ? `Credit card${a.statementDay ? " · statement on the " + ordinal(+a.statementDay) : ""}${a.dueDay ? " · due on the " + ordinal(+a.dueDay) : ""}${a.apr ? " · " + a.apr + "% APR" : ""}` : a.type === "cash" ? "Cash" : "Bank account"}</div>
         ${util != null ? `<div style="margin-top:6px">${meter(util, lv === "ok" ? "" : lv)}</div>` : ""}</span>
         <span style="text-align:right">${a.type === "credit" ? `<div class="num" style="font-weight:650">${money(+a.balance || 0, 0)}</div>${util != null ? `<span class="pill ${lv}">${Math.round(util * 100)}% used</span>` : ""}` : ""}</span></button>`;
-    }).join("");
+    };
+    const accts = d.accounts.map(acctRow).join("");
     const owed = sum(credit, a => +a.balance || 0);
     const mins = sum(credit.filter(a => +a.balance > 0), a => +a.minPay || Math.max(25, (+a.balance || 0) * .02));
     if (ui.payoff == null) ui.payoff = Math.ceil(mins * 1.5 / 10) * 10 || 100;
@@ -254,34 +272,119 @@ const cards = {
     if (owed > 0) {
       const plan = A.payoffPlan(credit, ui.payoff), minOnly = A.payoffPlan(credit, mins);
       const done = plan.ok ? addMonths(todayStr(), plan.months) : null;
-      payoff = `<div class="card"><h2>Pay off your cards</h2>
+      const pays = A.cardPayments(d, ui.payoff), paidN = pays.filter(x => x.paid).length;
+      payoff = `<div class="card" style="gap:0"><div class="row" style="margin-bottom:4px"><h2>Card payments this month</h2><span class="pill ${paidN === pays.length ? "ok" : ""}">${paidN} of ${pays.length} paid</span></div>
+        ${pays.map(x => `<div class="item"><span class="avatar" style="background:${esc(x.a.color || "#5b6a62")}">${esc(initials(x.a.name))}</span>
+          <span class="grow"><div class="title">${esc(x.a.name)}</div><div class="sub">${x.paid ? `Paid${x.paidAmt ? " " + money(x.paidAmt, 0) : ""} · balance ${money(+x.a.balance || 0, 0)}` : `${x.due ? "Due " + esc(niceDate(x.due)) + " · " : ""}minimum ${money(x.min, 0)}`}</div></span>
+          ${x.paid ? `<span class="pill ok">Paid</span>` : `<span class="num amt">${money(x.pay, 0)}</span><button class="btn small primary" data-pay="${esc(x.a.id)}" data-amt="${x.pay.toFixed(2)}">Pay</button>`}</div>`).join("")}
+        <p class="muted small" style="margin:8px 0 0">Amounts follow your plan below: every card's minimum, plus the extra on the highest-interest card. Paying in full each month means no interest at all.</p></div>`;
+      payoff += `<div class="card"><h2>Pay off your cards</h2>
         <div class="row"><span class="muted">Total owed</span><b class="num">${money(owed)}</b></div>
         <label class="field"><span>I can pay this much a month in total</span><input class="input num" id="payAmt" type="number" inputmode="decimal" min="0" value="${ui.payoff}"></label>
         ${plan.ok ? `<div class="banner info"><span>Debt-free in <b>${plan.months} months</b> (${esc(monthLabel(done))}), paying about <b>${money(plan.interest, 0)}</b> in interest.${minOnly.ok && minOnly.months > plan.months ? ` Paying only the minimums would take ${minOnly.months} months and cost ${money(minOnly.interest, 0)}.` : ""}</span></div>
+          <div class="chart"><div class="tip muted small">Balance owed over time. Tap the chart to read a month.</div>${payoffChart(plan, minOnly)}
+          <div class="legend"><span><i class="swatch" style="background:var(--accent)"></i> Your plan</span><span><i class="swatch dash"></i> Minimums only</span></div></div>
           <div class="stack small">${plan.order.map((o, i) => `<div class="row"><span>${i + 1}. ${esc(o.name)}</span><span class="muted">paid off in month ${o.month}</span></div>`).join("")}</div>
           <p class="muted small" style="margin:0">Pay every card's minimum, then put everything extra on the card with the highest APR.${credit.some(a => !+a.apr) ? " Add each card's APR for accurate numbers." : ""}</p>`
           : plan.never ? `<div class="banner over">That payment doesn't cover the interest. Try a higher amount.</div>` : `<div class="banner over">The minimum payments add up to ${money(plan.needed, 0)}. Enter at least that.</div>`}</div>`;
     }
-    const bills = d.bills.map(b => `<button class="item" data-bill="${esc(b.id)}"><span class="grow"><div class="title">${esc(b.name)}</div><div class="sub">Due on the ${ordinal(+b.dueDay)}${b.acct ? " · " + esc(store.acctById(b.acct).name) : ""}</div></span><span class="num amt">${money(+b.amount || 0)}</span></button>`).join("");
-    return topbar("Cards & bills", "", `<button class="icon-btn" data-act="addacct" aria-label="Add an account">${icon("plus")}</button>`)
-      + `<div class="card" style="gap:0"><div class="row" style="margin-bottom:4px"><h2>Accounts</h2><button class="btn small" data-act="import">${"Import statement"}</button></div>${accts}</div>`
-      + payoff
-      + `<div class="card" style="gap:0"><div class="row" style="margin-bottom:4px"><h2>Bills & due dates</h2><button class="btn small" data-act="addbill">Add bill</button></div>
-        ${bills || `<div class="empty">Add rent, phone, insurance and other bills to get reminders before they're due.</div>`}
-        ${d.bills.length || credit.some(a => a.dueDay || a.statementDay) ? `<button class="btn block" data-act="calendar" style="margin-top:10px">Add reminders to my iPhone Calendar</button>` : ""}</div>`;
+    const bills = [...d.bills].sort((a, b) => BILL_TYPES.findIndex(t => t[0] === (a.type || "bill")) - BILL_TYPES.findIndex(t => t[0] === (b.type || "bill"))).map(b => {
+      const ends = b.type === "plan" && +b.paymentsLeft > 0 ? addMonths(todayStr(), +b.paymentsLeft - 1) : null;
+      return `<button class="item" data-bill="${esc(b.id)}"><span class="grow"><div class="title">${esc(b.name)} <span class="pill">${esc(billType(b))}</span></div><div class="sub">Due on the ${ordinal(+b.dueDay)}${b.type === "plan" ? (ends ? ` · ${+b.paymentsLeft} payment${+b.paymentsLeft === 1 ? "" : "s"} left · ends ${esc(monthLabel(ends))}` : +b.paymentsLeft === 0 && b.paymentsLeft !== "" && b.paymentsLeft != null ? " · paid off" : "") : ""}${b.acct ? " · " + esc(store.acctById(b.acct).name) : ""}</div></span><span class="num amt">${money(+b.amount || 0)}</span></button>`;
+    }).join("");
+    const fixed = sum(d.bills.filter(b => !(b.type === "plan" && b.paymentsLeft !== "" && b.paymentsLeft != null && +b.paymentsLeft === 0)), b => +b.amount || 0);
+    const calBtn = d.bills.length || credit.some(a => a.dueDay || a.statementDay) ? `<button class="btn block" data-act="calendar">${icon("calendar")} Add reminders to my iPhone Calendar</button>` : "";
+    const head = topbar("Bills & cards", "", `<button class="icon-btn" data-act="${ui.cardsTab === "bills" ? "addbill" : "addacct"}" aria-label="${ui.cardsTab === "bills" ? "Add a bill" : "Add an account"}">${icon("plus")}</button>`)
+      + subtabs("cardsTab", [["cards", "Cards", "card"], ["bills", "Bills", "bill"], ["accounts", "Accounts", "bank"]]);
+    if (ui.cardsTab === "bills") {
+      const groups = BILL_TYPES.map(([t, l]) => [l, d.bills.filter(b => (b.type || "bill") === t)]).filter(([, g]) => g.length);
+      return head + `<div class="grid2"><div class="stat"><span class="label">Fixed needs a month</span><b class="num">${money(fixed, 0)}</b></div><div class="stat"><span class="label">Due in 14 days</span><b class="num">${A.upcoming(d, 14).filter(u => u.kind === "bill" && !u.paid).length}</b></div></div>`
+        + `<div class="card" style="gap:0"><div class="row" style="margin-bottom:4px"><h2>Rent, bills & payment plans</h2><button class="btn small" data-act="addbill">Add</button></div>
+        ${bills || `<div class="empty">Add your rent, phone, insurance and any payment plans (car, phone, Affirm, loans) to get reminders before they're due.</div>`}</div>`
+        + (groups.length > 1 ? `<div class="legend">${groups.map(([l, g]) => `<span>${esc(l)}: <b class="num">${money(sum(g, b => +b.amount || 0), 0)}</b>/mo</span>`).join("")}</div>` : "")
+        + calBtn;
+    }
+    if (ui.cardsTab === "accounts") {
+      return head + `<div class="card" style="gap:0"><div class="row" style="margin-bottom:4px"><h2>All accounts</h2><button class="btn small" data-act="import">${icon("upload")} Import</button></div>${accts}</div>`
+        + `<p class="muted small" style="margin:0 4px">Tap an account to edit it, set card due dates, or import a statement into it.</p>`;
+    }
+    const creditRows = d.accounts.filter(a => a.type === "credit");
+    return head + (credit.length ? `<div class="grid2"><div class="stat"><span class="label">Total owed</span><b class="num">${money(owed, 0)}</b></div><div class="stat"><span class="label">Credit used</span><b class="num">${sum(credit, a => +a.limit || 0) ? Math.round(owed / sum(credit, a => +a.limit || 0) * 100) + "%" : "—"}</b><span class="small muted">keep under 30%</span></div></div>` : "")
+      + (payoff || (credit.length ? `<div class="card"><div class="empty">No card balances. Nice!</div></div>` : `<div class="card"><div class="empty">Add your credit cards to plan payments and get due-date reminders.</div><button class="btn primary" data-act="addacct2">Add a card</button></div>`))
+      + (creditRows.length ? `<div class="card" style="gap:0"><h2 style="margin-bottom:4px">Your cards</h2>${creditRows.map(acctRow).join("")}</div>` : "")
+      + calBtn;
   },
   mount(root) {
     root.querySelectorAll("[data-acct]").forEach(b => (b.onclick = () => openAccount(b.dataset.acct)));
     root.querySelectorAll("[data-bill]").forEach(b => (b.onclick = () => openBill(b.dataset.bill)));
-    root.querySelector("[data-act=addacct]").onclick = () => openAccount(null);
-    root.querySelector("[data-act=import]").onclick = () => openImport();
-    root.querySelector("[data-act=addbill]").onclick = () => openBill(null);
+    root.querySelectorAll("[data-act=addacct], [data-act=addacct2]").forEach(b => (b.onclick = () => openAccount(null)));
+    root.querySelectorAll("[data-act=import]").forEach(b => (b.onclick = () => openImport()));
+    root.querySelectorAll("[data-act=addbill]").forEach(b => (b.onclick = () => openBill(null)));
+    bindSubtabs(root);
     const cal = root.querySelector("[data-act=calendar]"); if (cal) cal.onclick = () => exportCalendar();
+    root.querySelectorAll("[data-pay]").forEach(b => (b.onclick = () => openPayCard(b.dataset.pay, +b.dataset.amt)));
+    bindTips(root);
     const p = root.querySelector("#payAmt");
     if (p) p.onchange = () => { ui.payoff = Math.max(0, +p.value || 0); rerender(); };
   }
 };
+const BILL_TYPES = [["rent", "Rent"], ["plan", "Payment plan"], ["bill", "Bill"]];
+const billType = b => (BILL_TYPES.find(t => t[0] === (b.type || "bill")) || BILL_TYPES[2])[1];
 const ordinal = n => n + (n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th");
+
+// ====================================================== CHARTS
+const MONTH_SHORT = m => MON[parseDate(m).getMonth()] + " " + String(parseDate(m).getFullYear()).slice(2);
+const niceStep = max => { const p = Math.pow(10, Math.floor(Math.log10(max / 3))), f = max / 3 / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p; };
+
+// Monthly spending columns with the monthly budget as a dashed line. Tap a column for its total.
+function monthChart(monthly, budget) {
+  const W = 340, H = 170, L = 40, R = 6, T = 22, B = 22, n = monthly.length;
+  const maxRaw = Math.max(1, budget, ...monthly.map(m => m.total)), step = niceStep(maxRaw), max = Math.ceil(maxRaw / step) * step;
+  const y = v => T + (H - T - B) * (1 - v / max), bw = (W - L - R) / n, gap = Math.min(10, bw * .3);
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Spending by month">`;
+  for (let v = 0; v <= max + 1e-9; v += step) s += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${L - 6}" y="${y(v) + 3}" text-anchor="end">${esc(money(v, 0))}</text>`;
+  monthly.forEach((m, i) => {
+    const x = L + i * bw + gap / 2, w = bw - gap, h = y(0) - y(m.total), r = Math.min(4, w / 2, h);
+    const over = budget && m.total > budget;
+    // Rounded top, square base.
+    s += `<g data-tip="${esc(MONTH_SHORT(m.month))}: ${esc(money(m.total, 0))}${budget ? (over ? " · " + esc(money(m.total - budget, 0)) + " over budget" : " · " + esc(money(budget - m.total, 0)) + " under") : ""}" style="cursor:pointer">
+      <rect x="${x - gap / 2}" y="${T}" width="${bw}" height="${H - T - B}" fill="transparent"/>
+      ${h > 0 ? `<path d="M${x},${y(0)} V${y(m.total) + r} q0,-${r} ${r},-${r} H${x + w - r} q${r},0 ${r},${r} V${y(0)} Z" fill="${over ? "var(--over)" : "var(--accent)"}"/>` : ""}</g>
+      <text x="${x + w / 2}" y="${H - 6}" text-anchor="middle">${esc(MON[parseDate(m.month).getMonth()])}</text>`;
+  });
+  if (budget) s += `<line x1="${L}" x2="${W - R}" y1="${y(budget)}" y2="${y(budget)}" stroke="var(--ink)" stroke-width="1.5" stroke-dasharray="4 3"/>`;
+  return s + `</svg>`;
+}
+
+// Balance owed over time: the plan against paying only the minimums.
+function payoffChart(plan, minOnly) {
+  const W = 340, H = 170, L = 44, R = 70, T = 12, B = 22;
+  const a = plan.track, b = minOnly.ok ? minOnly.track : null;
+  const n = Math.max(a.length, b ? Math.min(b.length, a.length * 3) : 0) - 1 || 1;
+  const maxRaw = Math.max(1, ...a), step = niceStep(maxRaw), max = Math.ceil(maxRaw / step) * step;
+  const x = i => L + (W - L - R) * i / n, y = v => T + (H - T - B) * (1 - v / max);
+  const line = arr => arr.slice(0, n + 1).map((v, i) => (i ? "L" : "M") + x(i).toFixed(1) + "," + y(v).toFixed(1)).join("");
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Balance owed by month">`;
+  for (let v = 0; v <= max + 1e-9; v += step) s += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${L - 6}" y="${y(v) + 3}" text-anchor="end">${esc(money(v, 0))}</text>`;
+  const ticks = n <= 12 ? 3 : n <= 36 ? 6 : 12;
+  for (let i = 0; i <= n; i += ticks) s += `<text x="${x(i)}" y="${H - 6}" text-anchor="middle">${i ? i + "m" : "now"}</text>`;
+  if (b) s += `<path d="${line(b)}" fill="none" stroke="var(--muted)" stroke-width="2" stroke-dasharray="5 4"/>`;
+  s += `<path d="${line(a)}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round"/>`;
+  s += `<circle cx="${x(a.length - 1)}" cy="${y(0)}" r="4" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>`;
+  s += `<text x="${x(a.length - 1) + 8}" y="${y(0) - 6}" style="fill:var(--ink);font-weight:600">Your plan</text>`;
+  if (b) { const last = Math.min(b.length - 1, n); s += `<text x="${x(last) + 6}" y="${y(b[last]) + 4}">${b.length - 1 > n ? "Minimums →" : "Minimums"}</text>`; }
+  // Invisible columns for tap-to-read.
+  for (let i = 0; i <= n; i++) s += `<rect x="${x(i) - (W - L - R) / n / 2}" y="${T}" width="${(W - L - R) / n}" height="${H - T - B}" fill="transparent" data-tip="${i ? "Month " + i : "Now"}: ${esc(money(a[Math.min(i, a.length - 1)], 0))} on your plan${b ? " · " + esc(money(b[Math.min(i, b.length - 1)], 0)) + " with minimums only" : ""}"/>`;
+  return s + `</svg>`;
+}
+// Tapping a mark shows its numbers in the line above the chart.
+function bindTips(root) {
+  root.querySelectorAll(".chart").forEach(c => {
+    const out = c.querySelector(".tip"); if (!out) return;
+    const def = out.textContent;
+    c.querySelectorAll("[data-tip]").forEach(m => (m.onclick = () => { out.textContent = out.textContent === m.dataset.tip ? def : m.dataset.tip; }));
+  });
+}
 
 // ====================================================== INSIGHTS
 const insights = {
@@ -289,7 +392,7 @@ const insights = {
     const d = D();
     const ins = A.insights(d, ui.months);
     const has = d.txns.some(t => t.kind === "spend");
-    const subs = ins.recurring.filter(r => r.cat !== "bills"), subsTotal = sum(subs, r => r.amount);
+    const subs = ins.recurring.filter(r => !["bills", "rent", "plans"].includes(r.cat)), subsTotal = sum(subs, r => r.amount);
     const chat = ui.chat.map(m => m.role === "user" ? `<div class="bubble-q">${esc(m.content)}</div>` : `<div class="answer">${renderAnswer(m.content)}${m.budget ? `<button class="btn primary block" data-apply="${ui.chat.indexOf(m)}">Apply this budget</button>` : ""}</div>`).join("");
     const claudeCard = d.settings.apiKey ? `<div class="card"><div class="row"><h2>Ask Claude</h2>${ui.chat.length ? `<button class="link" data-act="clearchat">Clear</button>` : ""}</div>
       ${chat || `<p class="muted small" style="margin:0">Claude sees your totals by category and merchant, your budget, cards and goals. It never sees full statements or card numbers.</p>`}
@@ -297,22 +400,46 @@ const insights = {
       ${ui.chat.length ? "" : `<div class="prompts">${["Where am I overspending?", "What should I cut?", "Build my budget for next month", "How do I pay off my cards faster?"].map(q => `<button class="chip" data-q="${esc(q)}">${esc(q)}</button>`).join("")}</div>`}
       <form id="askForm" class="row"><input class="input" id="askIn" placeholder="Ask about your money…" autocomplete="off" ${ui.busy ? "disabled" : ""}><button class="btn primary" ${ui.busy ? "disabled" : ""}>Ask</button></form></div>`
       : `<div class="card"><h2>Ask Claude</h2><p class="muted small" style="margin:0">Add your Claude API key in Settings to get a personal spending review, ideas for what to cut, and a budget you can apply with one tap.</p><button class="btn primary" data-act="settings">Add Claude key</button></div>`;
-    if (!has) return topbar("Insights") + claudeCard + `<div class="card"><div class="empty">Import a statement to see where your money goes.</div><button class="btn primary" data-act="import">Import a statement</button></div>`;
-    const maxM = Math.max(1, ...ins.monthly.map(m => m.total));
-    const monthlyChart = ins.monthly.length > 1 ? `<div class="card"><h2>Month by month</h2><div class="stack">${ins.monthly.map(m => `
-      <div class="row small"><span style="width:58px" class="muted">${esc(MON[parseDate(m.month).getMonth()])} ${String(parseDate(m.month).getFullYear()).slice(2)}</span><span style="flex:1">${meter(m.total / maxM, A.totalBudget(d) && m.total > A.totalBudget(d) ? "over" : "")}</span><span class="num" style="width:72px;text-align:right">${money(m.total, 0)}</span></div>`).join("")}</div>
-      ${A.totalBudget(d) ? `<div class="legend"><span><span class="dot" style="background:var(--over)"></span> Over your ${money(A.totalBudget(d), 0)} budget</span></div>` : ""}</div>` : "";
-    const catTable = `<div class="card"><h2>Categories, per month</h2><div class="table-wrap"><table><thead><tr><th>Category</th><th class="r">Average</th><th class="r">Budget</th><th class="r">Difference</th></tr></thead><tbody>${ins.catRows.map(r => {
-      const diff = r.budget ? r.avg - r.budget : null;
-      return `<tr><td><span class="dot" style="background:${esc(r.cat.color)}"></span> ${esc(r.cat.name)}</td><td class="r num">${money(r.avg, 0)}</td><td class="r num">${r.budget ? money(r.budget, 0) : "—"}</td><td class="r num ${diff > 0 ? "over" : diff != null ? "ok" : ""}">${diff == null ? "" : (diff > 0 ? "+" : "") + money(diff, 0)}</td></tr>`;
-    }).join("")}</tbody></table></div></div>`;
+    const tabs = topbar("Insights", "Where your money goes") + subtabs("insTab", [["charts", "Charts", "chart"], ["save", "Save", "spark"], ["claude", "Ask Claude", "chat"]]);
+    if (ui.insTab === "claude") return tabs + claudeCard;
+    if (!has) return tabs + `<div class="card"><div class="empty">Import a statement to see where your money goes.</div><button class="btn primary" data-act="import">Import a statement</button></div>`;
+    const sv = A.savings(d, ui.months), tb = A.totalBudget(d);
+    // Needs vs wants: one bar, two labelled parts.
+    const nw = sv.needs + sv.wants || 1;
+    const split = `<div class="card"><h2>Needs vs wants</h2>
+      <div class="split"><span style="width:${(sv.needs / nw * 100).toFixed(1)}%;background:var(--needs)"></span><span style="width:${(sv.wants / nw * 100).toFixed(1)}%;background:var(--wants)"></span></div>
+      <div class="grid2"><div><div class="row small"><span><span class="dot" style="background:var(--needs)"></span> <b>Needs</b></span><b class="num">${money(sv.needs, 0)}</b></div><div class="muted small">${Math.round(sv.needs / nw * 100)}% · rent, bills, payment plans, groceries, transport, health</div></div>
+      <div><div class="row small"><span><span class="dot" style="background:var(--wants)"></span> <b>Wants</b></span><b class="num">${money(sv.wants, 0)}</b></div><div class="muted small">${Math.round(sv.wants / nw * 100)}% · eating out, shopping, fun, subscriptions</div></div></div>
+      <p class="muted small" style="margin:0">Per month, on average. A common target is about 50% needs and 30% wants, with 20% of income saved.</p></div>`;
+    // Where the money goes: a bar per category, biggest first. Tap one to see its top places.
+    const maxC = Math.max(1, ...ins.catRows.map(r => Math.max(r.avg, r.budget)));
+    const total = sum(ins.catRows, r => r.avg) || 1;
+    const where = `<div class="card"><h2>Where your money goes</h2><p class="muted small" style="margin:0">Average per month. Tap a category to see where it went.</p><div class="bars">${ins.catRows.filter(r => r.avg > 0).map(r => {
+      const places = ins.merchants.filter(m => m.cat === r.cat.id).slice(0, 4);
+      return `<details class="bar-row"><summary>
+        <div class="row small"><span><span class="dot" style="background:${esc(r.cat.color)}"></span> ${esc(r.cat.name)}</span><span><b class="num">${money(r.avg, 0)}</b> <span class="muted">${Math.round(r.avg / total * 100)}%</span></span></div>
+        <div class="bar-track"><span style="width:${(r.avg / maxC * 100).toFixed(1)}%;background:${esc(r.cat.color)}"></span>${r.budget ? `<i style="left:${(Math.min(r.budget, maxC) / maxC * 100).toFixed(1)}%" title="Budget"></i>` : ""}</div>
+        ${r.budget ? `<div class="small ${r.avg > r.budget ? "over" : "muted"}">${r.avg > r.budget ? money(r.avg - r.budget, 0) + " over" : money(r.budget - r.avg, 0) + " under"} its ${money(r.budget, 0)} budget</div>` : ""}</summary>
+        <div class="stack small" style="gap:4px;padding:6px 0 2px 16px">${places.map(m => `<div class="row"><span>${esc(m.merchant)} <span class="muted">· ${m.count}×</span></span><span class="num">${money(m.perMonth, 0)}/mo</span></div>`).join("") || `<span class="muted">No details</span>`}</div></details>`;
+    }).join("")}</div>${ins.catRows.some(r => r.budget) ? `<div class="legend"><span><i class="tick"></i> Budget</span></div>` : ""}</div>`;
+    const months = ins.monthly.length > 1 ? `<div class="card chart"><h2>Spending by month</h2><div class="tip muted small">${tb ? `Dashed line: your ${money(tb, 0)} monthly budget. ` : ""}Tap a month for details.</div>${monthChart(ins.monthly, tb)}</div>` : "";
+    // Where to save: each want's average with the part above a realistic target highlighted.
+    const maxS = Math.max(1, ...sv.rows.map(r => r.avg));
+    const save = `<div class="card"><h2>Where you can save</h2>${sv.rows.length ? `
+      <div class="hero-num"><span class="label">You could keep about</span><b class="num">${money(sv.total, 0)}<small>/month</small></b><span class="muted small">${money(sv.total * 12, 0)} a year, by trimming these to the targets below</span></div>
+      <div class="bars">${sv.rows.map(r => `<div class="bar-row"><div class="row small"><span><span class="dot" style="background:${esc(r.cat.color)}"></span> ${esc(r.cat.name)}</span><b class="num ok">save ${money(r.save, 0)}</b></div>
+        <div class="bar-track"><span style="width:${(r.target / maxS * 100).toFixed(1)}%;background:${esc(r.cat.color)}"></span><span class="cut" style="width:${(r.save / maxS * 100).toFixed(1)}%"></span></div>
+        <div class="muted small">${money(r.avg, 0)} now → ${money(r.target, 0)} a month</div></div>`).join("")}</div>
+      <div class="legend"><span><i class="swatch cut"></i> The part you could cut</span></div>
+      ${sv.subs ? `<p class="muted small" style="margin:0">Subscriptions also cost ${money(sv.subs, 0)} a month. They're listed below; cancel any you don't use.</p>` : ""}
+      <button class="btn block" data-act="suggest">Set these as my budget</button>`
+      : `<p class="muted small" style="margin:0">Nothing stands out yet. Import a few months of statements for better suggestions.</p>`}</div>`;
     const list = (title, rows, note) => `<div class="card" style="gap:0"><h2 style="margin-bottom:4px">${title}</h2>${note ? `<p class="muted small" style="margin:0 0 6px">${note}</p>` : ""}${rows}</div>`;
-    return topbar("Insights", "Where your money goes")
-      + claudeCard
-      + `<div class="seg" role="group" aria-label="Time range">${[[1, "1 month"], [3, "3 months"], [6, "6 months"], [12, "12 months"]].map(([m, l]) => `<button data-m="${m}" aria-pressed="${ui.months === m}">${l}</button>`).join("")}</div>`
-      + `<div class="grid2"><div class="stat"><span class="label">Spend per month</span><b class="num">${money(ins.perMonth, 0)}</b><span class="small muted">average since ${esc(niceDate(ins.start))}</span></div>
+    const range = `<div class="seg range" role="group" aria-label="Time range">${[[1, "1 month"], [3, "3 months"], [6, "6 months"], [12, "12 months"]].map(([m, l]) => `<button data-m="${m}" aria-pressed="${ui.months === m}">${l}</button>`).join("")}</div>`
+    const stats = `<div class="grid2"><div class="stat"><span class="label">Spend per month</span><b class="num">${money(ins.perMonth, 0)}</b><span class="small muted">average since ${esc(niceDate(ins.start))}</span></div>
          <div class="stat"><span class="label">Income per month</span><b class="num">${ins.income || +d.settings.income ? money(+d.settings.income || ins.income, 0) : "—"}</b><span class="small ${(+d.settings.income || ins.income) - ins.perMonth < 0 ? "over" : "ok"}">${ins.income || +d.settings.income ? ((+d.settings.income || ins.income) - ins.perMonth >= 0 ? money((+d.settings.income || ins.income) - ins.perMonth, 0) + " left over" : money(ins.perMonth - (+d.settings.income || ins.income), 0) + " short") : "add it in Budget"}</span></div></div>`
-      + monthlyChart + catTable
+    if (ui.insTab === "charts") return tabs + range + stats + split + where + months;
+    return tabs + range + save
       + list("Subscriptions and repeating charges", subs.length ? subs.map(r => `<div class="item"><span class="grow"><div class="title">${esc(r.merchant)}</div><div class="sub">Last charged ${esc(niceDate(r.last))} · ${r.months} months</div></span><span class="num amt">${money(r.amount)}/mo</span></div>`).join("") : `<div class="empty">No repeating charges found yet. This needs at least 2 months of statements.</div>`,
         subs.length ? `About <b>${money(subsTotal, 0)} a month</b>, or ${money(subsTotal * 12, 0)} a year. Cancel any you don't use.` : "")
       + (ins.small.length ? list("Small buys that add up", ins.small.map(m => `<div class="item"><span class="grow"><div class="title">${esc(m.merchant)}</div><div class="sub">${m.count} times · about ${money(m.total / m.count)} each</div></span><span class="num amt">${money(m.perMonth, 0)}/mo</span></div>`).join(""), "") : "")
@@ -320,6 +447,7 @@ const insights = {
   },
   mount(root) {
     root.querySelectorAll("[data-m]").forEach(b => (b.onclick = () => { ui.months = +b.dataset.m; rerender(); }));
+    bindSubtabs(root);
     root.querySelectorAll("[data-act=settings]").forEach(b => (b.onclick = () => openSettings()));
     root.querySelectorAll("[data-act=import]").forEach(b => (b.onclick = () => openImport()));
     root.querySelectorAll("[data-q]").forEach(b => (b.onclick = () => askClaude(b.dataset.q)));
@@ -327,6 +455,9 @@ const insights = {
     const f = root.querySelector("#askForm");
     if (f) f.onsubmit = e => { e.preventDefault(); const q = root.querySelector("#askIn").value.trim(); if (q) askClaude(q); };
     root.querySelectorAll("[data-apply]").forEach(b => (b.onclick = () => applyBudget(ui.chat[+b.dataset.apply].budget, "Claude's budget applied")));
+    const sg = root.querySelector("[data-act=suggest]");
+    if (sg) sg.onclick = () => { const sv = A.savings(D(), ui.months); applyBudget(Object.fromEntries(sv.rows.map(r => [r.cat.id, r.target])), "Budgets set for " + sv.rows.length + " categories"); };
+    bindTips(root);
   }
 };
 
@@ -553,24 +684,74 @@ function openAccount(id) {
 }
 
 function openBill(id) {
-  const d = D(), bl = id ? d.bills.find(x => x.id === id) : { id: uid(), name: "", amount: "", dueDay: "", acct: "", cat: "bills" };
-  sheet(id ? bl.name : "Add a bill", `
-    <label class="field"><span>Bill</span><input class="input" id="bN" value="${esc(bl.name)}" placeholder="Rent, phone, car insurance…" maxlength="40"></label>
+  const d = D(), bl = id ? d.bills.find(x => x.id === id) : { id: uid(), name: "", amount: "", dueDay: "", acct: "", type: "bill", paymentsLeft: "" };
+  sheet(id ? bl.name : "Add rent, a bill or a payment plan", `
+    <div class="seg" role="group" aria-label="Type" id="bT">${BILL_TYPES.map(([v, l]) => `<button type="button" data-t="${v}" aria-pressed="${(bl.type || "bill") === v}">${l}</button>`).join("")}</div>
+    <label class="field"><span>Name</span><input class="input" id="bN" value="${esc(bl.name)}" placeholder="Rent, phone, car payment…" maxlength="40"></label>
     <div class="grid2"><label class="field"><span>Amount</span><input class="input num" id="bA" type="number" inputmode="decimal" value="${bl.amount}"></label>
     <label class="field"><span>Due day of the month</span><input class="input num" id="bD" type="number" inputmode="numeric" min="1" max="31" value="${bl.dueDay}"></label></div>
+    <label class="field" id="bPL"><span>Payments left (including this month)</span><input class="input num" id="bL" type="number" inputmode="numeric" min="0" value="${bl.paymentsLeft ?? ""}" placeholder="e.g. 18"></label>
     <label class="field"><span>Paid from</span><select class="input" id="bAc"><option value="">Not set</option>${acctOpts(bl.acct)}</select></label>
-    <button class="btn primary block" id="bS">Save</button>${id ? `<button class="btn danger block" id="bX">Delete bill</button>` : ""}`, (b, close) => {
+    <p class="muted small" style="margin:0">Rent, bills and payment plans all count as needs. You get a reminder before each due date.</p>
+    <button class="btn primary block" id="bS">Save</button>${id ? `<button class="btn danger block" id="bX">Delete</button>` : ""}`, (b, close) => {
+    let type = bl.type || "bill";
+    const syncT = () => { b.querySelectorAll("[data-t]").forEach(x => x.setAttribute("aria-pressed", x.dataset.t === type)); b.querySelector("#bPL").hidden = type !== "plan"; };
+    syncT(); b.querySelector("#bT").onclick = e => { const t = e.target.closest("[data-t]"); if (t) { type = t.dataset.t; syncT(); } };
     if (!id) setTimeout(() => b.querySelector("#bN").focus(), 100);
     b.querySelector("#bS").onclick = () => {
       const name = b.querySelector("#bN").value.trim(), day = +b.querySelector("#bD").value;
       if (!name || !(day >= 1 && day <= 31)) return toast("Add a name and a due day from 1 to 31");
       store.update(x => {
-        const rec = { ...bl, name, amount: +b.querySelector("#bA").value || 0, dueDay: day, acct: b.querySelector("#bAc").value };
+        const left = b.querySelector("#bL").value;
+        const rec = { ...bl, name, type, amount: +b.querySelector("#bA").value || 0, dueDay: day, acct: b.querySelector("#bAc").value, paymentsLeft: type === "plan" && left !== "" ? Math.max(0, Math.round(+left)) : "" };
         const i = x.bills.findIndex(y => y.id === bl.id); if (i >= 0) x.bills[i] = rec; else x.bills.push(rec);
       });
       close(); toast("Saved");
     };
-    const del = b.querySelector("#bX"); if (del) del.onclick = () => { store.update(x => { x.bills = x.bills.filter(y => y.id !== bl.id); }); close(); toast("Bill deleted"); };
+    const del = b.querySelector("#bX"); if (del) del.onclick = () => { store.update(x => { x.bills = x.bills.filter(y => y.id !== bl.id); }); close(); toast("Deleted"); };
+  });
+}
+
+// Card details read from a statement. The balance only replaces an older one, minus any payment recorded since.
+function applyStatementInfo(c, inf) {
+  if (inf.dueDate) c.dueDay = +inf.dueDate.slice(8);
+  if (inf.statementDate) c.statementDay = +inf.statementDate.slice(8);
+  if (inf.minPay != null) c.minPay = inf.minPay;
+  if (inf.limit != null) c.limit = inf.limit;
+  if (inf.apr != null) c.apr = inf.apr;
+  const asOf = inf.statementDate || todayStr();
+  if (inf.balance != null && !(c.balanceAsOf > asOf)) {
+    const paidSince = c.lastPaid && c.lastPaid.date > asOf ? c.lastPaid.amt : 0;
+    c.balance = round2(Math.max(0, inf.balance - paidSince));
+    c.balanceAsOf = asOf;
+  }
+}
+
+// Record a card payment: lowers the balance owed and ticks off this month.
+function openPayCard(id, suggested) {
+  const a = store.acctById(id), d = D();
+  const due = A.cardPayments(d, ui.payoff || 0).find(x => x.a.id === id)?.due;
+  const month = (due || todayStr()).slice(0, 7);
+  const banks = d.accounts.filter(x => x.type === "bank");
+  sheet("Pay " + a.name, `
+    <div class="grid2"><div class="stat"><span class="label">Balance owed</span><b class="num">${money(+a.balance || 0)}</b></div><div class="stat"><span class="label">Due</span><b>${due ? esc(niceDate(due)) : "Not set"}</b></div></div>
+    <label class="field"><span>Amount paid</span><input class="input num" id="pA" type="number" inputmode="decimal" step="0.01" value="${suggested || ""}"></label>
+    <div class="prompts">${[["Plan", suggested], ["Minimum", Math.min(+a.balance || 0, +a.minPay || 0)], ["Full balance", +a.balance || 0]].filter(([, v]) => v > 0).map(([l, v]) => `<button class="chip" data-v="${v}">${l} ${money(v, 0)}</button>`).join("")}</div>
+    ${banks.length ? `<label class="field"><span>Paid from</span><select class="input" id="pF">${opts(banks.map(x => [x.id, x.name]), banks[0].id)}</select></label>` : ""}
+    <p class="muted small" style="margin:0">Make the payment in your bank's app, then record it here. When you import the statement, the payment line counts as a transfer, not spending.</p>
+    <button class="btn primary block" id="pS">Record payment</button>`, (b, close) => {
+    b.querySelectorAll("[data-v]").forEach(c => (c.onclick = () => (b.querySelector("#pA").value = (+c.dataset.v).toFixed(2))));
+    b.querySelector("#pS").onclick = () => {
+      const amt = round2(+b.querySelector("#pA").value || 0);
+      if (!(amt > 0)) return toast("Enter the amount you paid");
+      store.update(x => {
+        const c = x.accounts.find(y => y.id === id);
+        c.balance = round2(Math.max(0, (+c.balance || 0) - amt));
+        c.paidFor = month;
+        c.lastPaid = { month, amt, date: todayStr(), from: b.querySelector("#pF")?.value || "" };
+      });
+      close(); toast(`${money(amt)} recorded. ${a.name} balance updated.`);
+    };
   });
 }
 
@@ -595,14 +776,14 @@ async function exportCalendar() {
 }
 
 // ====================================================== IMPORT
-export function openImport(acctId, file) {
+export function openImport(acctId, files) {
   const d = D();
   const statementAccts = d.accounts.filter(a => a.type !== "cash");
   sheet("Import a statement", `
-    <p class="muted small" style="margin:0">On your bank or card's website or app, look for <b>Download transactions</b> or <b>Export</b> and choose <b>CSV</b> (or OFX/QFX). The file is read on this phone only.</p>
+    <p class="muted small" style="margin:0">Best: a <b>CSV</b> from your bank's website (Download or Export). It's read on this phone only.<br>Or choose <b>photos, screenshots or a PDF</b> of the statement and Claude will read it. Those pages are sent to Claude with your key.</p>
     <label class="field"><span>Account</span><select class="input" id="iA">${opts(statementAccts.map(a => [a.id, a.name]), acctId || statementAccts[0]?.id)}<option value="__new">+ Add a new account…</option></select></label>
     <div id="iNew" class="grid2" hidden><input class="input" id="iNN" placeholder="Account name"><select class="input" id="iNT">${opts([["credit", "Credit card"], ["bank", "Bank account"]], "credit")}</select></div>
-    <label class="field"><span>Statement file</span><input class="input" id="iF" type="file" accept=".csv,.ofx,.qfx,.txt,text/csv"></label>
+    <label class="field"><span>Statement file</span><input class="input" id="iF" type="file" multiple accept="${STATEMENT_TYPES}"></label>
     <div id="iStep2"></div>`, (b) => {
     const sel = b.querySelector("#iA");
     const syncNew = () => (b.querySelector("#iNew").hidden = sel.value !== "__new");
@@ -613,8 +794,19 @@ export function openImport(acctId, file) {
       if (sel.value !== "__new") return store.acctById(sel.value);
       return { id: "new", name: b.querySelector("#iNN").value.trim() || "New account", type: b.querySelector("#iNT").value };
     };
-    const load = async f => {
+    const load = async files => {
+      files = [...(files || [])];
+      const f = files[0];
       if (!f) return;
+      if (files.every(claude.isPicture)) {
+        if (!d.settings.apiKey) return toast("Add your Claude key in Settings to read pictures and PDFs");
+        const step = b.querySelector("#iStep2");
+        step.innerHTML = `<div class="banner info"><span>Claude is reading ${files.length > 1 ? files.length + " pages" : "your statement"}… this can take a minute.</span></div>`;
+        try { const r = await claude.readStatement(d, files); state = { kind: "claude", raw: r.rows, info: r.info, saveInfo: true }; }
+        catch (e) { step.innerHTML = ""; return toast(e instanceof SyntaxError ? "Claude couldn't read that. Try a clearer picture." : claude.explainError(e)); }
+        if (!state.raw.length) { step.innerHTML = ""; state = null; return toast("No transactions found in that picture"); }
+        return build();
+      }
       const text = await f.text();
       if (/<OFX>|OFXHEADER|<STMTTRN>/i.test(text)) state = { kind: "ofx", raw: imp.parseOFX(text) };
       else {
@@ -626,11 +818,11 @@ export function openImport(acctId, file) {
       }
       build();
     };
-    b.querySelector("#iF").onchange = e => load(e.target.files[0]);
-    if (file) { b.querySelector("#iF").closest(".field").hidden = true; load(file); }
+    b.querySelector("#iF").onchange = e => load(e.target.files);
+    if (files) { b.querySelector("#iF").closest(".field").hidden = true; load(files); }
     function build() {
       const acc = account();
-      const raw = state.kind === "ofx" ? state.raw : imp.rowsFromCSV(state.p, state.mapping, state.dateOrder, state.out);
+      const raw = state.kind !== "csv" ? state.raw : imp.rowsFromCSV(state.p, state.mapping, state.dateOrder, state.out);
       state.rows = imp.prepare(raw, acc, d);
       paint();
     }
@@ -644,7 +836,11 @@ export function openImport(acctId, file) {
         <div class="grid2"><label class="field"><span>Dates are</span><select class="input" id="iDO">${opts([["mdy", "Month/Day/Year"], ["dmy", "Day/Month/Year"]], state.dateOrder)}</select></label>
         <label class="field"><span>Purchases show as</span><select class="input" id="iSign">${opts([["neg", "Minus amounts"], ["pos", "Plus amounts"]], state.out)}</select></label></div></div></details>` : "";
       const uncats = [...new Set(inc.filter(r => r.kind === "spend" && r.cat === "other").map(r => r.merchant))];
-      step.innerHTML = mapping + `
+      const info = state.info, credit = account().type === "credit";
+      const infoCard = info && credit ? `<div class="card" style="gap:6px"><h3 style="margin:0">Card details on this statement</h3>
+        <div class="small">${[info.dueDate && "Payment due <b>" + esc(niceDate(info.dueDate, true)) + "</b>", info.statementDate && "Statement date " + esc(niceDate(info.statementDate, true)), info.balance != null && "Balance " + money(info.balance), info.minPay != null && "Minimum " + money(info.minPay), info.limit != null && "Limit " + money(info.limit, 0), info.apr != null && info.apr + "% interest"].filter(Boolean).join(" · ")}</div>
+        <label class="row small" style="justify-content:flex-start;gap:8px"><input type="checkbox" id="iInfo" ${state.saveInfo ? "checked" : ""} style="width:20px;height:20px;accent-color:var(--accent)"> Save these to the card for due-date reminders</label></div>` : "";
+      step.innerHTML = mapping + infoCard + `
         <div class="banner info"><span><b>${fresh.length}</b> new transaction${fresh.length === 1 ? "" : "s"}${dup ? ` · ${dup} already imported` : ""} · ${rows.filter(r => r.kind === "transfer").length} card payments or transfers (not counted as spending)</span></div>
         ${uncats.length && d.settings.apiKey ? `<button class="btn block" id="iClaude">Let Claude sort ${uncats.length} unknown place${uncats.length === 1 ? "" : "s"}</button>` : ""}
         <button class="btn primary block" id="iGo" ${inc.length ? "" : "disabled"}>Import ${inc.length} transaction${inc.length === 1 ? "" : "s"}</button>
@@ -656,6 +852,7 @@ export function openImport(acctId, file) {
               <span class="grid2"><select class="input" data-kind="${i}" style="padding:6px 8px;font-size:14px">${opts([["spend", r.amt < 0 ? "Refund" : "Spending"], ["income", "Money in"], ["transfer", "Transfer / payment"]], r.kind)}</select>
               ${r.kind === "spend" ? `<select class="input" data-cat="${i}" style="padding:6px 8px;font-size:14px">${catOpts(r.cat)}</select>` : "<span></span>"}</span></span></div>`).join("")}
           ${rows.length > 400 ? `<div class="empty">Showing the first 400 of ${rows.length}. All ${inc.length} selected will be imported.</div>` : ""}</div>`;
+      const ii = step.querySelector("#iInfo"); if (ii) ii.onchange = () => (state.saveInfo = ii.checked);
       step.querySelectorAll("[data-map]").forEach(s => (s.onchange = () => { state.mapping = { ...state.mapping, [s.dataset.map]: +s.value }; build(); }));
       const dO = step.querySelector("#iDO"); if (dO) dO.onchange = () => { state.dateOrder = dO.value; build(); };
       const sg = step.querySelector("#iSign"); if (sg) sg.onchange = () => { state.out = sg.value; build(); };
@@ -688,6 +885,8 @@ export function openImport(acctId, file) {
             if (r.learn && r.cat) x.rules[r.merchant.toUpperCase()] = r.cat;
           }
           if (state.kind === "csv") x.settings.dateOrder = state.dateOrder;
+          const inf = state.info, card = x.accounts.find(y => y.id === acc.id);
+          if (inf && state.saveInfo && card?.type === "credit") applyStatementInfo(card, inf);
         });
         closeSheet();
         announceAlerts(before, `Imported ${inc.length} transactions into ${acc.name}`);

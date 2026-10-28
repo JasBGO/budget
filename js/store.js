@@ -4,7 +4,9 @@ import { uid, setCurrency } from "./util.js";
 
 export const DEFAULT_CATEGORIES = [
   { id: "groceries", name: "Groceries", budget: 0, color: "#2f8a4c", need: true },
-  { id: "bills", name: "Bills & rent", budget: 0, color: "#7d5ba6", need: true },
+  { id: "rent", name: "Rent & housing", budget: 0, color: "#8a5a44", need: true },
+  { id: "bills", name: "Bills & utilities", budget: 0, color: "#7d5ba6", need: true },
+  { id: "plans", name: "Payment plans & loans", budget: 0, color: "#4a6670", need: true },
   { id: "transport", name: "Transport & gas", budget: 0, color: "#3b6fb6", need: true },
   { id: "health", name: "Health", budget: 0, color: "#1c9aa0", need: true },
   { id: "dining", name: "Eating out", budget: 0, color: "#d9822b", need: false },
@@ -40,6 +42,12 @@ export function setData(d) {
   const f = freshData();
   for (const k in f) if (data[k] === undefined) data[k] = f[k];
   for (const k in f.settings) if (data.settings[k] === undefined) data.settings[k] = f.settings[k];
+  // Rent and payment plans became their own categories; add them to older vaults.
+  for (const [i, c] of DEFAULT_CATEGORIES.entries()) {
+    if (["rent", "plans"].includes(c.id) && !data.categories.some(x => x.id === c.id)) data.categories.splice(Math.min(i, data.categories.length), 0, structuredClone(c));
+  }
+  const bills = data.categories.find(c => c.id === "bills");
+  if (bills?.name === "Bills & rent") bills.name = "Bills & utilities";
   setCurrency(data.settings.currency);
 }
 export function clear() { data = null; }
