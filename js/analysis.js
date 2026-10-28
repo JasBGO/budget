@@ -68,9 +68,11 @@ export function upcoming(d, days = 14) {
   const today = todayStr(), until = addDays(today, days), out = [];
   for (const b of d.bills) {
     if (!b.dueDay) continue;
+    const plan = b.type === "plan" && b.paymentsLeft !== "" && b.paymentsLeft != null, paid = b.paidFor === monthOf(nextDue(+b.dueDay, today));
+    if (plan && +b.paymentsLeft === 0 && !paid) continue; // paid off
     const due = nextDue(+b.dueDay, today);
     if (due > until) continue;
-    out.push({ kind: "bill", id: b.id, name: b.name, amount: +b.amount || 0, due, paid: b.paidFor === monthOf(due) });
+    out.push({ kind: "bill", id: b.id, name: b.name + (plan && +b.paymentsLeft > 0 ? ` (${b.paymentsLeft} left)` : ""), amount: +b.amount || 0, due, paid });
   }
   // Paying a card down before its statement closes lowers the balance reported to the credit bureaus.
   for (const a of d.accounts) {
@@ -204,20 +206,45 @@ export function suggestBudget(d, months = 3) {
 export function payoffPlan(cards, monthly) {
   let bal = cards.map(c => ({ id: c.id, name: c.name, b: +c.balance || 0, r: (+c.apr || 0) / 1200, min: +c.minPay || Math.max(25, (+c.balance || 0) * 0.02) }))
     .filter(c => c.b > 0);
-  if (!bal.length) return { months: 0, interest: 0, order: [], ok: true };
+  if (!bal.length) return { months: 0, interest: 0, order: [], ok: true, track: [0], pay: {} };
   const mins = sum(bal, c => Math.min(c.min, c.b));
   if (monthly < mins) return { ok: false, needed: mins };
-  let months = 0, interest = 0; const order = [];
+  let months = 0, interest = 0; const order = [], track = [sum(bal, c => c.b)], pay = {};
   while (bal.some(c => c.b > 0.005) && months < 600) {
     months++;
     for (const c of bal) { const i = c.b * c.r; interest += i; c.b += i; }
     let left = monthly;
-    for (const c of bal) { const p = Math.min(c.b, c.min); c.b -= p; left -= p; }
-    for (const c of [...bal].sort((x, y) => y.r - x.r)) { if (left <= 0) break; const p = Math.min(c.b, left); c.b -= p; left -= p; }
+    const put = (c, p) => { c.b -= p; left -= p; if (months === 1) pay[c.id] = (pay[c.id] || 0) + p; };
+    for (const c of bal) put(c, Math.min(c.b, c.min));
+    for (const c of [...bal].sort((x, y) => y.r - x.r)) { if (left <= 0) break; put(c, Math.min(c.b, left)); }
     for (const c of bal) if (c.b <= 0.005 && !order.find(o => o.id === c.id)) order.push({ id: c.id, name: c.name, month: months });
+    track.push(Math.max(0, sum(bal, c => c.b)));
   }
   if (months >= 600) return { ok: false, never: true };
-  return { ok: true, months, interest, order };
+  return { ok: true, months, interest, order, track, pay };
+}
+
+// This month's payment on each card under the plan, its due date, and whether it's been paid.
+export function cardPayments(d, monthly) {
+  const credit = d.accounts.filter(a => a.type === "credit");
+  const plan = payoffPlan(credit, monthly), today = todayStr();
+  return credit.filter(a => +a.balance > 0 || a.paidFor === monthOf(a.dueDay ? nextDue(+a.dueDay, today) : today)).map(a => {
+    const due = a.dueDay ? nextDue(+a.dueDay, today) : null;
+    const min = Math.min(+a.balance || 0, +a.minPay || Math.max(25, (+a.balance || 0) * 0.02));
+    return { a, due, min, pay: round2(plan.ok ? plan.pay[a.id] || 0 : min), paid: a.paidFor === monthOf(due || today), paidAmt: a.lastPaid?.month === monthOf(due || today) ? a.lastPaid.amt : 0 };
+  });
+}
+
+// ---------- Saving ----------
+// For each "want" category: a realistic target (its budget if lower, else 15% less) and what that saves.
+export function savings(d, months) {
+  const ins = insights(d, months);
+  const rows = ins.catRows.filter(r => !r.cat.need && r.avg >= 10).map(r => {
+    const target = r.budget > 0 && r.budget < r.avg ? r.budget : Math.floor(r.avg * 0.85 / 5) * 5;
+    return { cat: r.cat, avg: r.avg, target, save: r.avg - target };
+  }).filter(r => r.save >= 5).sort((a, b) => b.save - a.save);
+  const subs = recurring(d).filter(r => !["bills", "rent", "plans"].includes(r.cat));
+  return { rows, total: sum(rows, r => r.save), subs: sum(subs, r => r.amount), needs: sum(ins.catRows.filter(r => r.cat.need), r => r.avg), wants: sum(ins.catRows.filter(r => !r.cat.need), r => r.avg) };
 }
 
 export function goalMonthly(g) {
