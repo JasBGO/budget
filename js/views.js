@@ -32,6 +32,33 @@ function bindTxnRows(root) {
 const topbar = (title, kicker, actions = "") => `<div class="topbar"><div>${kicker ? `<div class="label">${esc(kicker)}</div>` : ""}<h1>${esc(title)}</h1></div><div class="actions">${actions}</div></div>`;
 
 // ====================================================== HOME
+// One import slot per statement Jas downloads. Each finds its account by name, or creates it on first use.
+const SLOTS = [
+  { key: "td", short: "TD", name: "TD Chequing", type: "bank", color: "#2e8540", match: /\btd\b/i, how: "EasyWeb › account › Download" },
+  { key: "pc", short: "PC", name: "PC Mastercard", type: "credit", color: "#d93a2b", match: /\bpc\b|president/i, how: "pcfinancial.ca › Transactions › Download" },
+  { key: "tri", short: "▲", name: "Triangle Mastercard", type: "credit", color: "#c2477a", match: /triangle|canadian tire|ctfs/i, how: "Triangle app or website › Transactions › Download" }
+];
+const slotAcct = (d, sl) => d.accounts.find(a => a.slot === sl.key) || d.accounts.find(a => a.type === sl.type && sl.match.test(a.name));
+function slotsHtml(d) {
+  return `<div class="card"><h2>Add a statement</h2><div class="list">${SLOTS.map(sl => {
+    const a = slotAcct(d, sl), ts = a ? d.txns.filter(t => t.acct === a.id && t.key) : [];
+    const last = ts.reduce((m, t) => (t.date > m ? t.date : m), "");
+    return `<label class="item" style="cursor:pointer"><span class="avatar" style="background:${esc(a?.color || sl.color)};color:#fff">${sl.short}</span>
+      <span class="grow"><div class="title">${esc(a?.name || sl.name)}</div><div class="sub">${last ? "Has transactions up to " + esc(niceDate(last, true)) : esc(sl.how)}</div></span>
+      <span class="btn small primary">Choose file</span><input type="file" data-slot="${sl.key}" accept=".csv,.ofx,.qfx,.txt,text/csv" hidden></label>`;
+  }).join("")}</div></div>`;
+}
+function bindSlots(root) {
+  root.querySelectorAll("[data-slot]").forEach(inp => (inp.onchange = () => {
+    const f = inp.files[0], sl = SLOTS.find(x => x.key === inp.dataset.slot);
+    if (!f || !sl) return;
+    let a = slotAcct(D(), sl);
+    if (!a) { a = { id: uid(), name: sl.name, type: sl.type, color: sl.color, slot: sl.key }; store.update(x => { x.accounts.push(a); }); }
+    else if (!a.slot) store.update(x => { const y = x.accounts.find(v => v.id === a.id); if (y) y.slot = sl.key; });
+    openImport(a.id, f);
+  }));
+}
+
 const home = {
   html() {
     const d = D(), s = A.safeToday(d), today = todayStr();
@@ -59,8 +86,8 @@ const home = {
       ? `is over budget: ${money(x.spent)} of ${money(+x.cat.budget, 0)}.` : `is at ${Math.round(x.ratio * 100)}% of its ${money(+x.cat.budget, 0)} budget with ${s.daysLeft} days to go.`}</span></div>`).join("")
       + (al.length > 2 ? `<button class="banner info" data-to="budget" style="border:0;text-align:left">${al.length - 2} more categor${al.length === 3 ? "y is" : "ies are"} near or over budget. See Budget ›</button>` : "");
     const upHtml = up.length ? `<div class="card"><div class="row"><h2>Coming up</h2><button class="link" data-to="cards">Bills</button></div><div class="list">${up.map(u => `
-      <div class="item"><span class="grow"><div class="title">${esc(u.name)}</div><div class="sub">${esc(niceDate(u.due))} · ${esc(relDay(u.due))}${u.kind === "card" && u.balance ? " · balance " + money(u.balance, 0) : ""}</div></span>
-      ${u.paid ? `<span class="pill ok">Paid</span>` : `<span class="amt num">${u.amount ? money(u.amount) : ""}</span><button class="btn small" data-paid="${u.kind}:${esc(u.id)}:${u.due.slice(0, 7)}">Paid</button>`}</div>`).join("")}</div></div>` : "";
+      <div class="item"><span class="grow"><div class="title">${esc(u.name)}</div><div class="sub">${u.kind === "statement" ? `Statement closes ${esc(niceDate(u.closes))} · pay by ${esc(relDay(u.due))} to report a low balance` : `${esc(niceDate(u.due))} · ${esc(relDay(u.due))}${u.kind === "card" && u.balance ? " · balance " + money(u.balance, 0) : ""}`}</div></span>
+      ${u.paid ? `<span class="pill ok">Paid</span>` : `<span class="amt num">${u.kind === "statement" ? money(u.balance, 0) : u.amount ? money(u.amount) : ""}</span><button class="btn small" data-paid="${u.kind}:${esc(u.id)}:${u.kind === "statement" ? u.closes : u.due.slice(0, 7)}">${u.kind === "statement" ? "Done" : "Paid"}</button>`}</div>`).join("")}</div></div>` : "";
     const [ws, we] = periodRange("week", today);
     const wSpent = sum(A.spendIn(d, ws, we), t => t.amt), wBudget = A.budgetFor(d, ws, we);
     const week = `<div class="grid2">
@@ -69,7 +96,7 @@ const home = {
     const goals = d.goals.length ? `<div class="card"><div class="row"><h2>Savings goals</h2><button class="link" data-to="budget">All</button></div>${d.goals.slice(0, 3).map(g => `
       <div class="stack" style="gap:4px"><div class="row small"><b>${esc(g.name)}</b><span class="num">${money(+g.saved || 0, 0)} of ${money(+g.target || 0, 0)}</span></div>${meter((+g.saved || 0) / (+g.target || 1), "")}</div>`).join("")}</div>` : "";
     return topbar("Hi Jas", niceDate(today), `<button class="icon-btn" data-act="lock" aria-label="Lock">${icon("lock")}</button><button class="icon-btn" data-act="settings" aria-label="Settings">${icon("gear")}</button>`)
-      + setup + hero + alertsHtml + week + upHtml
+      + setup + hero + alertsHtml + slotsHtml(d) + week + upHtml
       + `<div class="card"><div class="row"><h2>Recent</h2><button class="link" data-to="activity">See all</button></div><div class="list">${recent.length ? recent.map(txnRow).join("") : `<div class="empty">No transactions yet. Import a statement or tap + to log a purchase.</div>`}</div></div>`
       + goals;
   },
@@ -82,9 +109,13 @@ const home = {
     root.querySelector("[data-act=settings]").onclick = () => openSettings();
     root.querySelectorAll("[data-paid]").forEach(b => (b.onclick = () => {
       const [kind, id, month] = b.dataset.paid.split(":");
-      store.update(d => { const x = (kind === "card" ? d.accounts : d.bills).find(v => v.id === id); if (x) x.paidFor = month; });
+      store.update(d => {
+        const x = (kind === "bill" ? d.bills : d.accounts).find(v => v.id === id);
+        if (x && kind === "statement") x.paidDownFor = month; else if (x) x.paidFor = month;
+      });
       toast("Marked as paid");
     }));
+    bindSlots(root);
     bindTxnRows(root);
   }
 };
@@ -212,7 +243,7 @@ const cards = {
       const util = a.type === "credit" && +a.limit ? (+a.balance || 0) / +a.limit : null;
       const lv = util == null ? "" : util >= .5 ? "over" : util >= .3 ? "warn" : "ok";
       return `<button class="item" data-acct="${esc(a.id)}"><span class="avatar" style="background:${esc(a.color || "#5b6a62")}">${esc(initials(a.name))}</span>
-        <span class="grow"><div class="title">${esc(a.name)}</div><div class="sub">${a.type === "credit" ? `Credit card${a.dueDay ? " · due on the " + ordinal(+a.dueDay) : ""}${a.apr ? " · " + a.apr + "% APR" : ""}` : a.type === "cash" ? "Cash" : "Bank account"}</div>
+        <span class="grow"><div class="title">${esc(a.name)}</div><div class="sub">${a.type === "credit" ? `Credit card${a.statementDay ? " · statement on the " + ordinal(+a.statementDay) : ""}${a.dueDay ? " · due on the " + ordinal(+a.dueDay) : ""}${a.apr ? " · " + a.apr + "% APR" : ""}` : a.type === "cash" ? "Cash" : "Bank account"}</div>
         ${util != null ? `<div style="margin-top:6px">${meter(util, lv === "ok" ? "" : lv)}</div>` : ""}</span>
         <span style="text-align:right">${a.type === "credit" ? `<div class="num" style="font-weight:650">${money(+a.balance || 0, 0)}</div>${util != null ? `<span class="pill ${lv}">${Math.round(util * 100)}% used</span>` : ""}` : ""}</span></button>`;
     }).join("");
@@ -237,7 +268,7 @@ const cards = {
       + payoff
       + `<div class="card" style="gap:0"><div class="row" style="margin-bottom:4px"><h2>Bills & due dates</h2><button class="btn small" data-act="addbill">Add bill</button></div>
         ${bills || `<div class="empty">Add rent, phone, insurance and other bills to get reminders before they're due.</div>`}
-        ${d.bills.length || credit.some(a => a.dueDay) ? `<button class="btn block" data-act="calendar" style="margin-top:10px">Add reminders to my iPhone Calendar</button>` : ""}</div>`;
+        ${d.bills.length || credit.some(a => a.dueDay || a.statementDay) ? `<button class="btn block" data-act="calendar" style="margin-top:10px">Add reminders to my iPhone Calendar</button>` : ""}</div>`;
   },
   mount(root) {
     root.querySelectorAll("[data-acct]").forEach(b => (b.onclick = () => openAccount(b.dataset.acct)));
@@ -485,7 +516,7 @@ function openAccount(id) {
   const d = D(), a = id ? d.accounts.find(x => x.id === id) : { id: uid(), name: "", type: "credit", color: "#c2477a" };
   const count = id ? d.txns.filter(t => t.acct === id).length : 0;
   sheet(id ? a.name : "Add an account", `
-    <label class="field"><span>Name</span><input class="input" id="aN" value="${esc(a.name)}" placeholder="e.g. Mastercard ending 1234" maxlength="40"></label>
+    <label class="field"><span>Name</span><input class="input" id="aN" value="${esc(a.name)}" placeholder="e.g. PC Mastercard" maxlength="40"></label>
     <div class="grid2"><label class="field"><span>Type</span><select class="input" id="aT">${opts([["credit", "Credit card"], ["bank", "Bank account"], ["cash", "Cash"]], a.type)}</select></label>
     <label class="field"><span>Colour</span><input class="input" id="aC" type="color" value="${esc(a.color || "#5b6a62")}" style="height:46px;padding:4px"></label></div>
     <div id="aCredit" class="stack">
@@ -493,8 +524,9 @@ function openAccount(id) {
       <label class="field"><span>Credit limit</span><input class="input num" id="aL" type="number" inputmode="decimal" value="${a.limit ?? ""}"></label></div>
       <div class="grid2"><label class="field"><span>APR %</span><input class="input num" id="aR" type="number" inputmode="decimal" step="0.01" value="${a.apr ?? ""}"></label>
       <label class="field"><span>Minimum payment</span><input class="input num" id="aM" type="number" inputmode="decimal" value="${a.minPay ?? ""}"></label></div>
-      <label class="field"><span>Payment due day of the month</span><input class="input num" id="aD" type="number" inputmode="numeric" min="1" max="31" value="${a.dueDay ?? ""}"></label>
-      <p class="muted small" style="margin:0">Find these on your latest statement or in your card's app. Update the balance whenever you check it.</p>
+      <div class="grid2"><label class="field"><span>Statement date (day)</span><input class="input num" id="aSt" type="number" inputmode="numeric" min="1" max="31" value="${a.statementDay ?? ""}"></label>
+      <label class="field"><span>Payment due (day)</span><input class="input num" id="aD" type="number" inputmode="numeric" min="1" max="31" value="${a.dueDay ?? ""}"></label></div>
+      <p class="muted small" style="margin:0">Find these at the top of your latest statement. With the statement date, the app reminds you to pay the card down 3 days before it closes, so a low balance is reported to the credit bureaus.</p>
     </div>
     <button class="btn primary block" id="aS">Save</button>
     ${id ? `<button class="btn block" id="aI">Import a statement for this account</button>` : ""}
@@ -507,7 +539,7 @@ function openAccount(id) {
       if (!name) return toast("Give it a name");
       const num = s => { const v = b.querySelector(s).value; return v === "" ? undefined : +v; };
       const rec = { ...a, name, type: b.querySelector("#aT").value, color: b.querySelector("#aC").value };
-      if (rec.type === "credit") Object.assign(rec, { balance: num("#aB"), limit: num("#aL"), apr: num("#aR"), minPay: num("#aM"), dueDay: num("#aD") });
+      if (rec.type === "credit") Object.assign(rec, { balance: num("#aB"), limit: num("#aL"), apr: num("#aR"), minPay: num("#aM"), dueDay: num("#aD"), statementDay: num("#aSt") });
       store.update(x => { const i = x.accounts.findIndex(y => y.id === a.id); if (i >= 0) x.accounts[i] = rec; else x.accounts.push(rec); });
       close(); toast("Saved");
     };
@@ -546,14 +578,15 @@ function openBill(id) {
 async function exportCalendar() {
   const d = D(), today = todayStr().replace(/-/g, "");
   const items = [...d.bills.map(b => ({ id: b.id, name: b.name, day: +b.dueDay, amt: +b.amount || 0 })),
-    ...d.accounts.filter(a => a.type === "credit" && a.dueDay).map(a => ({ id: a.id, name: a.name + " payment", day: +a.dueDay, amt: +a.minPay || 0 }))];
+    ...d.accounts.filter(a => a.type === "credit" && a.dueDay).map(a => ({ id: a.id, name: a.name + " payment", day: +a.dueDay, amt: +a.minPay || 0 })),
+    ...d.accounts.filter(a => a.type === "credit" && a.statementDay).map(a => ({ id: a.id + "-stmt", name: "Pay down " + a.name + " before statement", day: Math.max(1, +a.statementDay - 3), amt: 0 }))];
   const icsEsc = s => String(s).replace(/[\\;,]/g, m => "\\" + m);
   const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Budget//EN", "CALSCALE:GREGORIAN"];
   for (const it of items) {
     const start = new Date(); start.setDate(Math.min(it.day, 28));
     const dt = start.getFullYear() + String(start.getMonth() + 1).padStart(2, "0") + String(Math.min(it.day, 28)).padStart(2, "0");
     lines.push("BEGIN:VEVENT", "UID:" + it.id + "@budget", "DTSTAMP:" + today + "T000000Z", "DTSTART;VALUE=DATE:" + dt,
-      "RRULE:FREQ=MONTHLY;BYMONTHDAY=" + (it.day > 28 ? "-1" : it.day), "SUMMARY:" + icsEsc(it.name + " due" + (it.amt ? " (" + money(it.amt) + ")" : "")),
+      "RRULE:FREQ=MONTHLY;BYMONTHDAY=" + (it.day > 28 ? "-1" : it.day), "SUMMARY:" + icsEsc(it.name + (/^Pay down/.test(it.name) ? "" : " due") + (it.amt ? " (" + money(it.amt) + ")" : "")),
       "BEGIN:VALARM", "TRIGGER:-P2D", "ACTION:DISPLAY", "DESCRIPTION:" + icsEsc(it.name + " is due in 2 days"), "END:VALARM", "END:VEVENT");
   }
   lines.push("END:VCALENDAR");
@@ -562,7 +595,7 @@ async function exportCalendar() {
 }
 
 // ====================================================== IMPORT
-export function openImport(acctId) {
+export function openImport(acctId, file) {
   const d = D();
   const statementAccts = d.accounts.filter(a => a.type !== "cash");
   sheet("Import a statement", `
@@ -580,8 +613,8 @@ export function openImport(acctId) {
       if (sel.value !== "__new") return store.acctById(sel.value);
       return { id: "new", name: b.querySelector("#iNN").value.trim() || "New account", type: b.querySelector("#iNT").value };
     };
-    b.querySelector("#iF").onchange = async e => {
-      const f = e.target.files[0]; if (!f) return;
+    const load = async f => {
+      if (!f) return;
       const text = await f.text();
       if (/<OFX>|OFXHEADER|<STMTTRN>/i.test(text)) state = { kind: "ofx", raw: imp.parseOFX(text) };
       else {
@@ -593,6 +626,8 @@ export function openImport(acctId) {
       }
       build();
     };
+    b.querySelector("#iF").onchange = e => load(e.target.files[0]);
+    if (file) { b.querySelector("#iF").closest(".field").hidden = true; load(file); }
     function build() {
       const acc = account();
       const raw = state.kind === "ofx" ? state.raw : imp.rowsFromCSV(state.p, state.mapping, state.dateOrder, state.out);

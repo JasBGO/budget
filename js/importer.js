@@ -40,7 +40,8 @@ export function detectMapping(rows) {
   let hi = -1;
   for (let i = 0; i < Math.min(rows.length, 15); i++) {
     const hits = rows[i].filter(c => Object.values(H).some(r => r.test(c))).length;
-    if (hits >= 2) { hi = i; break; }
+    const numbers = rows[i].filter(c => parseAmount(c) !== null).length;
+    if (hits >= 2 && numbers === 0) { hi = i; break; }
   }
   const header = hi >= 0 ? rows[hi] : rows[0].map((_, i) => "Column " + (i + 1));
   const body = rows.slice(hi + 1).filter(r => r.length >= 2);
@@ -53,6 +54,16 @@ export function detectMapping(rows) {
   const score = (i, test) => sample.filter(r => test(r[i] ?? "")).length;
   const cols = header.map((_, i) => i);
   if (m.date < 0) m.date = cols.sort((a, b) => score(b, isDateLike) - score(a, isDateLike))[0];
+  // Headerless debit/credit layout (TD EasyWeb: date, description, debit, credit, balance):
+  // two money columns that are each only sometimes filled, and never on the same row.
+  if (hi < 0 && m.amount < 0 && m.debit < 0) {
+    const money = cols.filter(i => i !== m.date && sample.some(r => parseAmount(r[i]) !== null));
+    const partial = money.filter(i => sample.some(r => !(r[i] || "").trim()));
+    if (partial.length >= 2) {
+      const [a, b] = partial;
+      if (!sample.some(r => (r[a] || "").trim() && (r[b] || "").trim())) { m.debit = a; m.credit = b; }
+    }
+  }
   if (m.amount < 0 && m.debit < 0) m.amount = [...cols].filter(i => i !== m.date).sort((a, b) => score(b, v => parseAmount(v) !== null) - score(a, v => parseAmount(v) !== null))[0];
   if (m.desc < 0) m.desc = [...cols].filter(i => i !== m.date && i !== m.amount).sort((a, b) => avgLen(sample, b) - avgLen(sample, a))[0];
   return { header, body, mapping: m, dateOrder: guessDateOrder(body.map(r => r[m.date])) };
@@ -149,17 +160,17 @@ export function parseOFX(text) {
 
 // ---------- Sorting ----------
 const KEYWORDS = [
-  ["subs", /netflix|spotify|hulu|disney ?\+|disney plus|hbo|\bmax\.com|youtube ?premium|youtubepremium|google ?one|google storage|icloud|apple\.com\/bill|apple music|amazon prime|prime video|audible|patreon|openai|chatgpt|anthropic|claude\.ai|adobe|microsoft ?365|office 365|xbox game pass|playstation ?plus|paramount|peacock|crunchyroll|duolingo|dropbox|sirius|onlyfans|twitch/i],
-  ["dining", /uber ?eats|doordash|grubhub|postmates|deliveroo|just ?eat|skip ?the ?dishes|mcdonald|starbucks|dunkin|chipotle|subway|taco bell|wendy|burger|pizza|domino|kfc|chick-?fil|panera|popeyes|five guys|shake shack|sonic drive|arby|jack in the box|dairy queen|tim hortons|panda express|wingstop|ihop|denny|applebee|olive garden|chili's|cafe|coffee|restaurant|grill|diner|bistro|sushi|ramen|bakery|kitchen|tavern|\bbar\b|\bpub\b|brew/i],
-  ["groceries", /walmart|wal-mart|kroger|safeway|costco|aldi|trader joe|whole foods|wholefds|publix|wegmans|h-?e-?b\b|food lion|giant eagle|stop & shop|sprouts|lidl|tesco|sainsbury|asda|morrisons|loblaw|no frills|sobeys|metro inc|woolworths|coles|meijer|winco|albertsons|vons|ralphs|fry's food|food 4 less|smart & final|save mart|piggly|hy-vee|instacart|grocery|supermarket|market\b/i],
-  ["transport", /\buber\b(?! ?eats)|lyft|shell|exxon|chevron|\bbp\b|mobil|texaco|sunoco|citgo|marathon|speedway|wawa|sheetz|racetrac|quiktrip|qt \d|circle k|7-eleven|valero|arco|76 |fuel|gas station|parking|park mobile|parkmobile|toll|e-?zpass|transit|metro card|\bmta\b|amtrak|greyhound|airline|delta air|united air|southwest|american air|jetblue|spirit air|frontier air|car wash|autozone|jiffy|o'reilly|advance auto|dmv/i],
-  ["bills", /rent|mortgage|property|electric|energy|power co|water|sewer|utility|utilities|comcast|xfinity|verizon|at&t|att\*|t-mobile|tmobile|sprint|spectrum|cox comm|optimum|frontier comm|internet|insurance|geico|progressive|state farm|allstate|liberty mutual|usaa|loan|student ln|navient|nelnet|sallie|hoa|phone bill|cricket|metro by|boost mobile|mint mobile/i],
-  ["health", /pharmacy|cvs|walgreens|rite aid|boots|doctor|dental|dentist|clinic|hospital|medical|health|urgent care|optometr|vision|planet fitness|la fitness|24 hour fitness|anytime fitness|crunch fit|equinox|orangetheory|\bgym\b|fitness|labcorp|quest diag/i],
+  ["subs", /crave|cbc gem|netflix|spotify|hulu|disney ?\+|disney plus|hbo|\bmax\.com|youtube ?premium|youtubepremium|google ?one|google storage|icloud|apple\.com\/bill|apple music|amazon prime|prime video|audible|patreon|openai|chatgpt|anthropic|claude\.ai|adobe|microsoft ?365|office 365|xbox game pass|playstation ?plus|paramount|peacock|crunchyroll|duolingo|dropbox|sirius|onlyfans|twitch/i],
+  ["dining", /a&w|harvey|swiss chalet|east side mario|boston pizza|pizza pizza|pizza nova|mary brown|osmow|freshii|second cup|skip ?the ?dishes|uber ?eats|doordash|grubhub|postmates|deliveroo|just ?eat|skip ?the ?dishes|mcdonald|starbucks|dunkin|chipotle|subway|taco bell|wendy|burger|pizza|domino|kfc|chick-?fil|panera|popeyes|five guys|shake shack|sonic drive|arby|jack in the box|dairy queen|tim hortons|panda express|wingstop|ihop|denny|applebee|olive garden|chili's|cafe|coffee|restaurant|grill|diner|bistro|sushi|ramen|bakery|kitchen|tavern|\bbar\b|\bpub\b|brew/i],
+  ["groceries", /loblaw|superstore|real canadian|no frills|zehrs|fortinos|provigo|maxi |sobeys|safeway|foodland|freshco|food basics|metro |iga |save-on|longo|farm boy|t&t|independent grocer|valu-mart|walmart|wal-mart|kroger|safeway|costco|aldi|trader joe|whole foods|wholefds|publix|wegmans|h-?e-?b\b|food lion|giant eagle|stop & shop|sprouts|lidl|tesco|sainsbury|asda|morrisons|loblaw|no frills|sobeys|metro inc|woolworths|coles|meijer|winco|albertsons|vons|ralphs|fry's food|food 4 less|smart & final|save mart|piggly|hy-vee|instacart|grocery|supermarket|market\b/i],
+  ["transport", /petro-?canada|esso|husky|ultramar|pioneer|irving|co-op gas|presto|ttc|translink|stm |go transit|via rail|westjet|air canada|porter air|flair air|impark|green p|honk|407 etr|\buber\b(?! ?eats)|lyft|shell|exxon|chevron|\bbp\b|mobil|texaco|sunoco|citgo|marathon|speedway|wawa|sheetz|racetrac|quiktrip|qt \d|circle k|7-eleven|valero|arco|76 |fuel|gas station|parking|park mobile|parkmobile|toll|e-?zpass|transit|metro card|\bmta\b|amtrak|greyhound|airline|delta air|united air|southwest|american air|jetblue|spirit air|frontier air|car wash|autozone|jiffy|o'reilly|advance auto|dmv/i],
+  ["bills", /rogers|bell canada|bell mobility|telus|fido|koodo|virgin plus|freedom mobile|chatr|public mobile|shaw comm|shaw cable|videotron|hydro|enbridge|fortis|epcor|enmax|atco|toronto hydro|intact|desjardins ins|belairdirect|td insurance|cooperators|rent|mortgage|property|electric|energy|power co|water|sewer|utility|utilities|comcast|xfinity|verizon|at&t|att\*|t-mobile|tmobile|sprint|spectrum|cox comm|optimum|frontier comm|internet|insurance|geico|progressive|state farm|allstate|liberty mutual|usaa|loan|student ln|navient|nelnet|sallie|hoa|phone bill|cricket|metro by|boost mobile|mint mobile/i],
+  ["health", /shoppers drug|rexall|london drugs|jean coutu|pharmasave|goodlife|pharmacy|cvs|walgreens|rite aid|boots|doctor|dental|dentist|clinic|hospital|medical|health|urgent care|optometr|vision|planet fitness|la fitness|24 hour fitness|anytime fitness|crunch fit|equinox|orangetheory|\bgym\b|fitness|labcorp|quest diag/i],
   ["fun", /cinema|theater|theatre|\bamc\b|regal|cinemark|ticketmaster|stubhub|eventbrite|live nation|steam|steampowered|playstation network|nintendo|xbox|epic games|roblox|bowling|golf|arcade|museum|concert|zoo|six flags|disneyland|bar & grill|casino|lottery|draftkings|fanduel/i],
   ["personal", /salon|barber|hair|nail|spa\b|ulta|sephora|beauty|massage|cosmetic/i],
-  ["shopping", /amazon|amzn|target|best buy|ebay|etsy|ikea|home depot|lowe's|lowes|tj ?maxx|marshalls|ross stores|old navy|\bgap\b|h&m|zara|nike|adidas|shein|temu|macy|nordstrom|kohl|jcpenney|dollar tree|dollar general|five below|walgreens.com|apple store|wayfair|michaels|hobby lobby|petsmart|petco|bath & body|victoria|foot locker|uniqlo|primark/i]
+  ["shopping", /canadian tire|dollarama|winners|homesense|marshalls|sport chek|mark's|giant tiger|hudson|the bay|indigo|staples|best buy|london drugs|simons|roots|amazon|amzn|target|best buy|ebay|etsy|ikea|home depot|lowe's|lowes|tj ?maxx|marshalls|ross stores|old navy|\bgap\b|h&m|zara|nike|adidas|shein|temu|macy|nordstrom|kohl|jcpenney|dollar tree|dollar general|five below|walgreens.com|apple store|wayfair|michaels|hobby lobby|petsmart|petco|bath & body|victoria|foot locker|uniqlo|primark/i]
 ];
-const TRANSFER = /payment\s*(-\s*)?(thank|received|recvd)|thank you.*payment|autopay|auto pay|auto-pay|online payment|mobile payment|card payment|credit card|crd pmt|card pmt|cc pmt|epayment|e-payment|bill pay.*(card|mastercard|visa)|transfer|xfer|trnsfr|to savings|from savings|to checking|from checking|venmo cashout|zelle (to|from) (self|me)|mastercard pmt|capital one.*(pmt|payment|mobile)|chase.*(epay|card)|citi.*(payment|autopay)|amex.*(payment|epayment)|discover.*(payment|e-pay)|barclaycard/i;
+const TRANSFER = /payment\s*(-\s*)?(thank|received|recvd)|thank you.*payment|autopay|auto pay|auto-pay|online payment|mobile payment|card payment|credit card|crd pmt|card pmt|cc pmt|pymt|ctfs|canadian tire bank|cdn tire mc|triangle (mc|mastercard|world)|epayment|e-payment|bill pay.*(card|mastercard|visa)|transfer|xfer|trnsfr|to savings|from savings|to checking|from checking|venmo cashout|zelle (to|from) (self|me)|mastercard pmt|capital one.*(pmt|payment|mobile)|chase.*(epay|card)|citi.*(payment|autopay)|amex.*(payment|epayment)|discover.*(payment|e-pay)|barclaycard/i;
 const INCOME = /payroll|direct dep|dir dep|salary|paycheck|wages|irs treas|tax ref|deposit from|interest paid|interest earned|dividend/i;
 
 export function categorize(desc, merchant, d) {
