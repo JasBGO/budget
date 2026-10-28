@@ -27,7 +27,7 @@ export function freshData() {
     rules: {},
     bills: [],
     goals: [],
-    claude: { lastReview: "", lastReviewAt: "" },
+    claude: { lastReview: "", lastReviewAt: "", chats: [], current: null },
     alertsShown: {}
   };
 }
@@ -46,6 +46,8 @@ export function setData(d) {
   for (const [i, c] of DEFAULT_CATEGORIES.entries()) {
     if (["rent", "plans"].includes(c.id) && !data.categories.some(x => x.id === c.id)) data.categories.splice(Math.min(i, data.categories.length), 0, structuredClone(c));
   }
+  data.claude.chats ||= [];
+  if (data.claude.current === undefined) data.claude.current = null;
   const bills = data.categories.find(c => c.id === "bills");
   if (bills?.name === "Bills & rent") bills.name = "Bills & utilities";
   setCurrency(data.settings.currency);
