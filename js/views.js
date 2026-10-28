@@ -7,7 +7,7 @@ import * as imp from "./importer.js";
 import { sheet, closeSheet, confirmSheet, toast, icon, meter, levelOf, initials, renderAnswer } from "./ui.js";
 import { esc, money, todayStr, addDays, periodRange, niceDate, monthLabel, monthStart, monthEnd, addMonths, daysBetween, relDay, sum, uid, round2, parseDate, MON, DOW, saveFile, weekStart } from "./util.js";
 
-export const ui = { tab: "home", period: "day", anchor: todayStr(), acct: null, search: "", months: 3, chat: [], busy: false, budgetMonth: todayStr(), payoff: null, cardsTab: "cards", insTab: "charts" };
+export const ui = { tab: "home", period: "day", anchor: todayStr(), acct: null, search: "", months: 3, busy: false, budgetMonth: todayStr(), payoff: null, cardsTab: "cards", insTab: "charts" };
 const D = () => store.data;
 const emit = (name, detail) => window.dispatchEvent(new CustomEvent(name, { detail }));
 const go = tab => emit("app:go", tab);
@@ -393,11 +393,13 @@ const insights = {
     const ins = A.insights(d, ui.months);
     const has = d.txns.some(t => t.kind === "spend");
     const subs = ins.recurring.filter(r => !["bills", "rent", "plans"].includes(r.cat)), subsTotal = sum(subs, r => r.amount);
-    const chat = ui.chat.map(m => m.role === "user" ? `<div class="bubble-q">${esc(m.content)}</div>` : `<div class="answer">${renderAnswer(m.content)}${m.budget ? `<button class="btn primary block" data-apply="${ui.chat.indexOf(m)}">Apply this budget</button>` : ""}</div>`).join("");
-    const claudeCard = d.settings.apiKey ? `<div class="card"><div class="row"><h2>Ask Claude</h2>${ui.chat.length ? `<button class="link" data-act="clearchat">Clear</button>` : ""}</div>
+    const msgs = chatMsgs(), past = d.claude.chats.filter(c => c.messages.length).length;
+    const chat = msgs.map((m, i) => m.role === "user" ? `<div class="bubble-q">${esc(m.content)}</div>` : `<div class="answer">${renderAnswer(m.content)}${m.budget ? `<button class="btn primary block" data-apply="${i}">Apply this budget</button>` : ""}</div>`).join("");
+    const claudeCard = d.settings.apiKey ? `<div class="card"><div class="row"><h2>Ask Claude</h2><span class="row" style="gap:6px">${past ? `<button class="btn small" data-act="pastchats">Past chats (${past})</button>` : ""}${msgs.length ? `<button class="btn small primary" data-act="newchat">${icon("plus")} New</button>` : ""}</span></div>
+      ${msgs.length && curChat(d)?.at ? `<div class="muted small">Started ${esc(niceDate(curChat(d).at.slice(0, 10), true))} · saved on this phone</div>` : ""}
       ${chat || `<p class="muted small" style="margin:0">Claude sees your totals by category and merchant, your budget, cards and goals. It never sees full statements or card numbers.</p>`}
       ${ui.busy ? `<div class="muted small">Claude is thinking…</div>` : ""}
-      ${ui.chat.length ? "" : `<div class="prompts">${["Where am I overspending?", "What should I cut?", "Build my budget for next month", "How do I pay off my cards faster?"].map(q => `<button class="chip" data-q="${esc(q)}">${esc(q)}</button>`).join("")}</div>`}
+      ${msgs.length ? "" : `<div class="prompts">${["Where am I overspending?", "What should I cut?", "Build my budget for next month", "How do I pay off my cards faster?"].map(q => `<button class="chip" data-q="${esc(q)}">${esc(q)}</button>`).join("")}</div>`}
       <form id="askForm" class="row"><input class="input" id="askIn" placeholder="Ask about your money…" autocomplete="off" ${ui.busy ? "disabled" : ""}><button class="btn primary" ${ui.busy ? "disabled" : ""}>Ask</button></form></div>`
       : `<div class="card"><h2>Ask Claude</h2><p class="muted small" style="margin:0">Add your Claude API key in Settings to get a personal spending review, ideas for what to cut, and a budget you can apply with one tap.</p><button class="btn primary" data-act="settings">Add Claude key</button></div>`;
     const tabs = topbar("Insights", "Where your money goes") + subtabs("insTab", [["charts", "Charts", "chart"], ["save", "Save", "spark"], ["claude", "Ask Claude", "chat"]]);
@@ -451,24 +453,52 @@ const insights = {
     root.querySelectorAll("[data-act=settings]").forEach(b => (b.onclick = () => openSettings()));
     root.querySelectorAll("[data-act=import]").forEach(b => (b.onclick = () => openImport()));
     root.querySelectorAll("[data-q]").forEach(b => (b.onclick = () => askClaude(b.dataset.q)));
-    const clr = root.querySelector("[data-act=clearchat]"); if (clr) clr.onclick = () => { ui.chat = []; rerender(); };
+    const nc = root.querySelector("[data-act=newchat]"); if (nc) nc.onclick = () => store.update(x => { x.claude.current = null; });
+    const pc = root.querySelector("[data-act=pastchats]"); if (pc) pc.onclick = () => openPastChats();
     const f = root.querySelector("#askForm");
     if (f) f.onsubmit = e => { e.preventDefault(); const q = root.querySelector("#askIn").value.trim(); if (q) askClaude(q); };
-    root.querySelectorAll("[data-apply]").forEach(b => (b.onclick = () => applyBudget(ui.chat[+b.dataset.apply].budget, "Claude's budget applied")));
+    root.querySelectorAll("[data-apply]").forEach(b => (b.onclick = () => applyBudget(chatMsgs()[+b.dataset.apply].budget, "Claude's budget applied")));
     const sg = root.querySelector("[data-act=suggest]");
     if (sg) sg.onclick = () => { const sv = A.savings(D(), ui.months); applyBudget(Object.fromEntries(sv.rows.map(r => [r.cat.id, r.target])), "Budgets set for " + sv.rows.length + " categories"); };
     bindTips(root);
   }
 };
 
+// Chats are kept in the encrypted vault, so a conversation survives closing the app.
+const curChat = d => d.claude.chats.find(c => c.id === d.claude.current) || null;
+const chatMsgs = () => curChat(D())?.messages || [];
+
+function openPastChats() {
+  const d = D(), list = d.claude.chats.filter(c => c.messages.length).sort((a, b) => (b.updated || b.at).localeCompare(a.updated || a.at));
+  sheet("Past chats", `<div class="list">${list.map(c => `<div class="item"><button class="grow" data-open="${esc(c.id)}" style="border:0;background:none;text-align:left;padding:0;min-width:0">
+      <div class="title">${esc(c.title)}</div><div class="sub">${esc(niceDate((c.updated || c.at).slice(0, 10), true))} · ${Math.ceil(c.messages.length / 2)} question${c.messages.length > 2 ? "s" : ""}${c.id === d.claude.current ? " · open now" : ""}</div></button>
+      <button class="icon-btn" data-del="${esc(c.id)}" aria-label="Delete chat">${icon("close")}</button></div>`).join("")}</div>
+    <button class="btn danger block" id="pcAll">Delete all chats</button>`, (b, close) => {
+    b.querySelectorAll("[data-open]").forEach(x => (x.onclick = () => { store.update(y => { y.claude.current = x.dataset.open; }); close(); }));
+    b.querySelectorAll("[data-del]").forEach(x => (x.onclick = () => {
+      store.update(y => { y.claude.chats = y.claude.chats.filter(c => c.id !== x.dataset.del); if (y.claude.current === x.dataset.del) y.claude.current = null; });
+      x.closest(".item").remove(); toast("Chat deleted");
+      if (!b.querySelector("[data-del]")) close();
+    }));
+    b.querySelector("#pcAll").onclick = () => confirmSheet("Delete all chats?", "This removes every saved conversation with Claude from this phone.", "Delete all", () => { store.update(y => { y.claude.chats = []; y.claude.current = null; }); toast("All chats deleted"); });
+  });
+}
+
 async function askClaude(q) {
   if (ui.busy) return;
   const d = D();
   if (!d.settings.apiKey) return openSettings();
-  const history = ui.chat.map(m => ({ role: m.role, content: m.content }));
-  ui.chat.push({ role: "user", content: q });
+  let c = curChat(d);
+  if (!c) {
+    c = { id: uid(), title: q.length > 60 ? q.slice(0, 57) + "…" : q, at: new Date().toISOString(), messages: [] };
+    d.claude.chats.push(c); d.claude.current = c.id;
+    if (d.claude.chats.length > 50) d.claude.chats.splice(0, d.claude.chats.length - 50); // keep the newest 50
+  }
+  // The last 30 messages are plenty of context and keep each question cheap.
+  const history = c.messages.slice(-30).map(m => ({ role: m.role, content: m.content }));
+  c.messages.push({ role: "user", content: q });
   const answer = { role: "assistant", content: "" };
-  ui.chat.push(answer);
+  c.messages.push(answer);
   ui.busy = true; rerender();
   let painted = 0;
   try {
@@ -478,14 +508,16 @@ async function askClaude(q) {
       if (Date.now() - painted > 300) { painted = Date.now(); paintChat(); }
     });
     answer.budget = claude.budgetFrom(answer.content, d);
-    store.update(x => { x.claude.lastReview = answer.content; x.claude.lastReviewAt = new Date().toISOString(); });
+    c.updated = new Date().toISOString();
+    store.update(x => { x.claude.lastReview = answer.content; x.claude.lastReviewAt = c.updated; });
   } catch (e) {
-    ui.chat.pop(); ui.chat.pop();
+    c.messages.splice(-2);
+    if (!c.messages.length) { d.claude.chats = d.claude.chats.filter(x => x !== c); d.claude.current = null; }
     toast(claude.explainError(e));
   } finally { ui.busy = false; rerender(); }
 }
 function paintChat() {
-  const last = ui.chat[ui.chat.length - 1];
+  const msgs = chatMsgs(), last = msgs[msgs.length - 1];
   const nodes = document.querySelectorAll(".answer");
   if (nodes.length) nodes[nodes.length - 1].innerHTML = renderAnswer(last.content);
   else rerender();
