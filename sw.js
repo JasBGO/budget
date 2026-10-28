@@ -1,7 +1,7 @@
 // Keeps the app working offline. Bump VERSION whenever any file changes so phones pick up the update.
-const VERSION = "budget-v7";
+const VERSION = "budget-v8";
 const FILES = ["./", "index.html", "manifest.webmanifest", "css/app.css",
-  "js/main.js", "js/views.js", "js/ui.js", "js/store.js", "js/vault.js", "js/analysis.js", "js/importer.js", "js/claude.js", "js/util.js",
+  "js/main.js", "js/views.js", "js/ui.js", "js/store.js", "js/vault.js", "js/analysis.js", "js/importer.js", "js/claude.js", "js/util.js", "js/xlsx.js", "js/export.js",
   "vendor/anthropic.js", "icons/icon-180.png", "icons/icon-192.png", "icons/icon-512.png"];
 
 // "reload" skips the browser's HTTP cache, so a new version caches new files.
