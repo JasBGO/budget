@@ -7,7 +7,7 @@ import * as imp from "./importer.js";
 import { sheet, closeSheet, confirmSheet, toast, icon, meter, levelOf, initials, renderAnswer } from "./ui.js";
 import { esc, money, todayStr, addDays, periodRange, niceDate, monthLabel, monthStart, monthEnd, addMonths, daysBetween, relDay, sum, uid, round2, parseDate, MON, DOW, saveFile, weekStart } from "./util.js";
 
-export const ui = { tab: "home", period: "day", anchor: todayStr(), acct: null, search: "", months: 3, chat: [], busy: false, budgetMonth: todayStr(), payoff: null };
+export const ui = { tab: "home", period: "day", anchor: todayStr(), acct: null, search: "", months: 3, chat: [], busy: false, budgetMonth: todayStr(), payoff: null, cardsTab: "cards", insTab: "charts" };
 const D = () => store.data;
 const emit = (name, detail) => window.dispatchEvent(new CustomEvent(name, { detail }));
 const go = tab => emit("app:go", tab);
@@ -29,6 +29,9 @@ function txnRow(t) {
 function bindTxnRows(root) {
   root.querySelectorAll("[data-txn]").forEach(b => (b.onclick = () => openTxn(D().txns.find(t => t.id === b.dataset.txn))));
 }
+// Sub-tabs inside a screen, so each page stays short.
+const subtabs = (key, list) => `<div class="seg tabs" role="tablist">${list.map(([v, l, ic]) => `<button role="tab" data-sub="${key}:${v}" aria-pressed="${ui[key] === v}">${ic ? icon(ic) : ""}${l}</button>`).join("")}</div>`;
+function bindSubtabs(root) { root.querySelectorAll("[data-sub]").forEach(b => (b.onclick = () => { const [k, v] = b.dataset.sub.split(":"); ui[k] = v; rerender(); window.scrollTo(0, 0); })); }
 const topbar = (title, kicker, actions = "") => `<div class="topbar"><div>${kicker ? `<div class="label">${esc(kicker)}</div>` : ""}<h1>${esc(title)}</h1></div><div class="actions">${actions}</div></div>`;
 
 // ====================================================== HOME
@@ -94,10 +97,12 @@ const home = {
     const week = `<div class="grid2">
       <div class="stat"><span class="label">Today</span><b class="num">${money(s.spentToday)}</b><span class="small muted">${A.spendIn(d, today, today).length} purchases</span></div>
       <div class="stat"><span class="label">This week</span><b class="num">${money(wSpent)}</b><span class="small ${wBudget && wSpent > wBudget ? "over" : "muted"}">${wBudget ? (wSpent > wBudget ? money(wSpent - wBudget, 0) + " over" : money(wBudget - wSpent, 0) + " left") : "no budget"}</span></div></div>`;
+    const quick = `<div class="quick">${[["import", "upload", "Add statement"], ["pay", "card", "Pay a card"], ["bill", "bill", "Add a bill"], ["claude", "chat", "Ask Claude"]]
+      .map(([k, ic, l]) => `<button data-quick="${k}"><span>${icon(ic)}</span>${l}</button>`).join("")}</div>`;
     const goals = d.goals.length ? `<div class="card"><div class="row"><h2>Savings goals</h2><button class="link" data-to="budget">All</button></div>${d.goals.slice(0, 3).map(g => `
       <div class="stack" style="gap:4px"><div class="row small"><b>${esc(g.name)}</b><span class="num">${money(+g.saved || 0, 0)} of ${money(+g.target || 0, 0)}</span></div>${meter((+g.saved || 0) / (+g.target || 1), "")}</div>`).join("")}</div>` : "";
     return topbar("Hi Jas", niceDate(today), `<button class="icon-btn" data-act="lock" aria-label="Lock">${icon("lock")}</button><button class="icon-btn" data-act="settings" aria-label="Settings">${icon("gear")}</button>`)
-      + setup + hero + alertsHtml + slotsHtml(d) + week + upHtml
+      + setup + hero + quick + alertsHtml + upHtml + week + slotsHtml(d)
       + `<div class="card"><div class="row"><h2>Recent</h2><button class="link" data-to="activity">See all</button></div><div class="list">${recent.length ? recent.map(txnRow).join("") : `<div class="empty">No transactions yet. Import a statement or tap + to log a purchase.</div>`}</div></div>`
       + goals;
   },
@@ -105,6 +110,13 @@ const home = {
     root.querySelectorAll("[data-to]").forEach(b => (b.onclick = () => {
       const to = b.dataset.to;
       if (to === "import") openImport(); else if (to === "settings") openSettings(); else go(to);
+    }));
+    root.querySelectorAll("[data-quick]").forEach(b => (b.onclick = () => {
+      const k = b.dataset.quick;
+      if (k === "import") openImport();
+      else if (k === "pay") { ui.cardsTab = "cards"; go("cards"); }
+      else if (k === "bill") openBill(null);
+      else { ui.insTab = "claude"; go("insights"); }
     }));
     root.querySelector("[data-act=lock]").onclick = () => emit("app:lock");
     root.querySelector("[data-act=settings]").onclick = () => openSettings();
@@ -244,14 +256,15 @@ const cards = {
   html() {
     const d = D();
     const credit = d.accounts.filter(a => a.type === "credit");
-    const accts = d.accounts.map(a => {
+    const acctRow = a => {
       const util = a.type === "credit" && +a.limit ? (+a.balance || 0) / +a.limit : null;
       const lv = util == null ? "" : util >= .5 ? "over" : util >= .3 ? "warn" : "ok";
       return `<button class="item" data-acct="${esc(a.id)}"><span class="avatar" style="background:${esc(a.color || "#5b6a62")}">${esc(initials(a.name))}</span>
         <span class="grow"><div class="title">${esc(a.name)}</div><div class="sub">${a.type === "credit" ? `Credit card${a.statementDay ? " · statement on the " + ordinal(+a.statementDay) : ""}${a.dueDay ? " · due on the " + ordinal(+a.dueDay) : ""}${a.apr ? " · " + a.apr + "% APR" : ""}` : a.type === "cash" ? "Cash" : "Bank account"}</div>
         ${util != null ? `<div style="margin-top:6px">${meter(util, lv === "ok" ? "" : lv)}</div>` : ""}</span>
         <span style="text-align:right">${a.type === "credit" ? `<div class="num" style="font-weight:650">${money(+a.balance || 0, 0)}</div>${util != null ? `<span class="pill ${lv}">${Math.round(util * 100)}% used</span>` : ""}` : ""}</span></button>`;
-    }).join("");
+    };
+    const accts = d.accounts.map(acctRow).join("");
     const owed = sum(credit, a => +a.balance || 0);
     const mins = sum(credit.filter(a => +a.balance > 0), a => +a.minPay || Math.max(25, (+a.balance || 0) * .02));
     if (ui.payoff == null) ui.payoff = Math.ceil(mins * 1.5 / 10) * 10 || 100;
@@ -280,20 +293,34 @@ const cards = {
       return `<button class="item" data-bill="${esc(b.id)}"><span class="grow"><div class="title">${esc(b.name)} <span class="pill">${esc(billType(b))}</span></div><div class="sub">Due on the ${ordinal(+b.dueDay)}${b.type === "plan" ? (ends ? ` · ${+b.paymentsLeft} payment${+b.paymentsLeft === 1 ? "" : "s"} left · ends ${esc(monthLabel(ends))}` : +b.paymentsLeft === 0 && b.paymentsLeft !== "" && b.paymentsLeft != null ? " · paid off" : "") : ""}${b.acct ? " · " + esc(store.acctById(b.acct).name) : ""}</div></span><span class="num amt">${money(+b.amount || 0)}</span></button>`;
     }).join("");
     const fixed = sum(d.bills.filter(b => !(b.type === "plan" && b.paymentsLeft !== "" && b.paymentsLeft != null && +b.paymentsLeft === 0)), b => +b.amount || 0);
-    return topbar("Cards & bills", "", `<button class="icon-btn" data-act="addacct" aria-label="Add an account">${icon("plus")}</button>`)
-      + `<div class="card" style="gap:0"><div class="row" style="margin-bottom:4px"><h2>Accounts</h2><button class="btn small" data-act="import">${"Import statement"}</button></div>${accts}</div>`
-      + payoff
-      + `<div class="card" style="gap:0"><div class="row" style="margin-bottom:4px"><h2>Rent, bills & payment plans</h2><button class="btn small" data-act="addbill">Add</button></div>
-        ${fixed ? `<div class="row small" style="padding:4px 0 6px"><span class="muted">Fixed needs each month</span><b class="num">${money(fixed, 0)}</b></div>` : ""}
-        ${bills || `<div class="empty">Add your rent, phone, insurance and any payment plans (car, phone, Affirm, loans) to get reminders before they're due.</div>`}
-        ${d.bills.length || credit.some(a => a.dueDay || a.statementDay) ? `<button class="btn block" data-act="calendar" style="margin-top:10px">Add reminders to my iPhone Calendar</button>` : ""}</div>`;
+    const calBtn = d.bills.length || credit.some(a => a.dueDay || a.statementDay) ? `<button class="btn block" data-act="calendar">${icon("calendar")} Add reminders to my iPhone Calendar</button>` : "";
+    const head = topbar("Bills & cards", "", `<button class="icon-btn" data-act="${ui.cardsTab === "bills" ? "addbill" : "addacct"}" aria-label="${ui.cardsTab === "bills" ? "Add a bill" : "Add an account"}">${icon("plus")}</button>`)
+      + subtabs("cardsTab", [["cards", "Cards", "card"], ["bills", "Bills", "bill"], ["accounts", "Accounts", "bank"]]);
+    if (ui.cardsTab === "bills") {
+      const groups = BILL_TYPES.map(([t, l]) => [l, d.bills.filter(b => (b.type || "bill") === t)]).filter(([, g]) => g.length);
+      return head + `<div class="grid2"><div class="stat"><span class="label">Fixed needs a month</span><b class="num">${money(fixed, 0)}</b></div><div class="stat"><span class="label">Due in 14 days</span><b class="num">${A.upcoming(d, 14).filter(u => u.kind === "bill" && !u.paid).length}</b></div></div>`
+        + `<div class="card" style="gap:0"><div class="row" style="margin-bottom:4px"><h2>Rent, bills & payment plans</h2><button class="btn small" data-act="addbill">Add</button></div>
+        ${bills || `<div class="empty">Add your rent, phone, insurance and any payment plans (car, phone, Affirm, loans) to get reminders before they're due.</div>`}</div>`
+        + (groups.length > 1 ? `<div class="legend">${groups.map(([l, g]) => `<span>${esc(l)}: <b class="num">${money(sum(g, b => +b.amount || 0), 0)}</b>/mo</span>`).join("")}</div>` : "")
+        + calBtn;
+    }
+    if (ui.cardsTab === "accounts") {
+      return head + `<div class="card" style="gap:0"><div class="row" style="margin-bottom:4px"><h2>All accounts</h2><button class="btn small" data-act="import">${icon("upload")} Import</button></div>${accts}</div>`
+        + `<p class="muted small" style="margin:0 4px">Tap an account to edit it, set card due dates, or import a statement into it.</p>`;
+    }
+    const creditRows = d.accounts.filter(a => a.type === "credit");
+    return head + (credit.length ? `<div class="grid2"><div class="stat"><span class="label">Total owed</span><b class="num">${money(owed, 0)}</b></div><div class="stat"><span class="label">Credit used</span><b class="num">${sum(credit, a => +a.limit || 0) ? Math.round(owed / sum(credit, a => +a.limit || 0) * 100) + "%" : "—"}</b><span class="small muted">keep under 30%</span></div></div>` : "")
+      + (payoff || (credit.length ? `<div class="card"><div class="empty">No card balances. Nice!</div></div>` : `<div class="card"><div class="empty">Add your credit cards to plan payments and get due-date reminders.</div><button class="btn primary" data-act="addacct2">Add a card</button></div>`))
+      + (creditRows.length ? `<div class="card" style="gap:0"><h2 style="margin-bottom:4px">Your cards</h2>${creditRows.map(acctRow).join("")}</div>` : "")
+      + calBtn;
   },
   mount(root) {
     root.querySelectorAll("[data-acct]").forEach(b => (b.onclick = () => openAccount(b.dataset.acct)));
     root.querySelectorAll("[data-bill]").forEach(b => (b.onclick = () => openBill(b.dataset.bill)));
-    root.querySelector("[data-act=addacct]").onclick = () => openAccount(null);
-    root.querySelector("[data-act=import]").onclick = () => openImport();
-    root.querySelector("[data-act=addbill]").onclick = () => openBill(null);
+    root.querySelectorAll("[data-act=addacct], [data-act=addacct2]").forEach(b => (b.onclick = () => openAccount(null)));
+    root.querySelectorAll("[data-act=import]").forEach(b => (b.onclick = () => openImport()));
+    root.querySelectorAll("[data-act=addbill]").forEach(b => (b.onclick = () => openBill(null)));
+    bindSubtabs(root);
     const cal = root.querySelector("[data-act=calendar]"); if (cal) cal.onclick = () => exportCalendar();
     root.querySelectorAll("[data-pay]").forEach(b => (b.onclick = () => openPayCard(b.dataset.pay, +b.dataset.amt)));
     bindTips(root);
@@ -373,7 +400,9 @@ const insights = {
       ${ui.chat.length ? "" : `<div class="prompts">${["Where am I overspending?", "What should I cut?", "Build my budget for next month", "How do I pay off my cards faster?"].map(q => `<button class="chip" data-q="${esc(q)}">${esc(q)}</button>`).join("")}</div>`}
       <form id="askForm" class="row"><input class="input" id="askIn" placeholder="Ask about your money…" autocomplete="off" ${ui.busy ? "disabled" : ""}><button class="btn primary" ${ui.busy ? "disabled" : ""}>Ask</button></form></div>`
       : `<div class="card"><h2>Ask Claude</h2><p class="muted small" style="margin:0">Add your Claude API key in Settings to get a personal spending review, ideas for what to cut, and a budget you can apply with one tap.</p><button class="btn primary" data-act="settings">Add Claude key</button></div>`;
-    if (!has) return topbar("Insights") + claudeCard + `<div class="card"><div class="empty">Import a statement to see where your money goes.</div><button class="btn primary" data-act="import">Import a statement</button></div>`;
+    const tabs = topbar("Insights", "Where your money goes") + subtabs("insTab", [["charts", "Charts", "chart"], ["save", "Save", "spark"], ["claude", "Ask Claude", "chat"]]);
+    if (ui.insTab === "claude") return tabs + claudeCard;
+    if (!has) return tabs + `<div class="card"><div class="empty">Import a statement to see where your money goes.</div><button class="btn primary" data-act="import">Import a statement</button></div>`;
     const sv = A.savings(d, ui.months), tb = A.totalBudget(d);
     // Needs vs wants: one bar, two labelled parts.
     const nw = sv.needs + sv.wants || 1;
@@ -406,12 +435,11 @@ const insights = {
       <button class="btn block" data-act="suggest">Set these as my budget</button>`
       : `<p class="muted small" style="margin:0">Nothing stands out yet. Import a few months of statements for better suggestions.</p>`}</div>`;
     const list = (title, rows, note) => `<div class="card" style="gap:0"><h2 style="margin-bottom:4px">${title}</h2>${note ? `<p class="muted small" style="margin:0 0 6px">${note}</p>` : ""}${rows}</div>`;
-    return topbar("Insights", "Where your money goes")
-      + claudeCard
-      + `<div class="seg" role="group" aria-label="Time range">${[[1, "1 month"], [3, "3 months"], [6, "6 months"], [12, "12 months"]].map(([m, l]) => `<button data-m="${m}" aria-pressed="${ui.months === m}">${l}</button>`).join("")}</div>`
-      + `<div class="grid2"><div class="stat"><span class="label">Spend per month</span><b class="num">${money(ins.perMonth, 0)}</b><span class="small muted">average since ${esc(niceDate(ins.start))}</span></div>
+    const range = `<div class="seg range" role="group" aria-label="Time range">${[[1, "1 month"], [3, "3 months"], [6, "6 months"], [12, "12 months"]].map(([m, l]) => `<button data-m="${m}" aria-pressed="${ui.months === m}">${l}</button>`).join("")}</div>`
+    const stats = `<div class="grid2"><div class="stat"><span class="label">Spend per month</span><b class="num">${money(ins.perMonth, 0)}</b><span class="small muted">average since ${esc(niceDate(ins.start))}</span></div>
          <div class="stat"><span class="label">Income per month</span><b class="num">${ins.income || +d.settings.income ? money(+d.settings.income || ins.income, 0) : "—"}</b><span class="small ${(+d.settings.income || ins.income) - ins.perMonth < 0 ? "over" : "ok"}">${ins.income || +d.settings.income ? ((+d.settings.income || ins.income) - ins.perMonth >= 0 ? money((+d.settings.income || ins.income) - ins.perMonth, 0) + " left over" : money(ins.perMonth - (+d.settings.income || ins.income), 0) + " short") : "add it in Budget"}</span></div></div>`
-      + split + where + months + save
+    if (ui.insTab === "charts") return tabs + range + stats + split + where + months;
+    return tabs + range + save
       + list("Subscriptions and repeating charges", subs.length ? subs.map(r => `<div class="item"><span class="grow"><div class="title">${esc(r.merchant)}</div><div class="sub">Last charged ${esc(niceDate(r.last))} · ${r.months} months</div></span><span class="num amt">${money(r.amount)}/mo</span></div>`).join("") : `<div class="empty">No repeating charges found yet. This needs at least 2 months of statements.</div>`,
         subs.length ? `About <b>${money(subsTotal, 0)} a month</b>, or ${money(subsTotal * 12, 0)} a year. Cancel any you don't use.` : "")
       + (ins.small.length ? list("Small buys that add up", ins.small.map(m => `<div class="item"><span class="grow"><div class="title">${esc(m.merchant)}</div><div class="sub">${m.count} times · about ${money(m.total / m.count)} each</div></span><span class="num amt">${money(m.perMonth, 0)}/mo</span></div>`).join(""), "") : "")
@@ -419,6 +447,7 @@ const insights = {
   },
   mount(root) {
     root.querySelectorAll("[data-m]").forEach(b => (b.onclick = () => { ui.months = +b.dataset.m; rerender(); }));
+    bindSubtabs(root);
     root.querySelectorAll("[data-act=settings]").forEach(b => (b.onclick = () => openSettings()));
     root.querySelectorAll("[data-act=import]").forEach(b => (b.onclick = () => openImport()));
     root.querySelectorAll("[data-q]").forEach(b => (b.onclick = () => askClaude(b.dataset.q)));

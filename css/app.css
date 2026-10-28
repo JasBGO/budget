@@ -200,3 +200,20 @@ table { border-collapse: collapse; width: 100%; font-size: .88rem }
 td, th { padding: 7px 4px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap }
 th { font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted) }
 td.r, th.r { text-align: right }
+
+/* ---------- navigation polish ---------- */
+.card.hero { background: linear-gradient(140deg, var(--accent), color-mix(in srgb, var(--accent) 70%, #1b3d8f)); }
+.tabbar button span { line-height: 1 }
+.tabbar button svg { padding: 3px 14px; box-sizing: content-box; border-radius: 99px; transition: background .2s }
+.tabbar button[aria-current="page"] svg { background: var(--accent-soft) }
+.seg.tabs { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 6px); z-index: 5; box-shadow: var(--shadow) }
+.seg.tabs button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 4px }
+.seg.tabs button svg { width: 17px; height: 17px; flex: none }
+.quick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px }
+.quick button { border: 0; background: var(--surface); box-shadow: var(--shadow); border-radius: 14px; padding: 12px 4px 10px; display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: .74rem; font-weight: 650; color: var(--ink); line-height: 1.15; text-align: center }
+.quick button span { width: 40px; height: 40px; border-radius: 12px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center }
+.quick button svg { width: 21px; height: 21px }
+.btn svg { width: 18px; height: 18px; vertical-align: -4px; margin-right: 2px }
+.seg.range { background: none; padding: 0; gap: 6px }
+.seg.range button { border: 1px solid var(--line); padding: 5px 4px; font-size: .8rem; border-radius: 99px }
+.seg.range button[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); box-shadow: none }
