@@ -72,6 +72,13 @@ export function upcoming(d, days = 14) {
     if (due > until) continue;
     out.push({ kind: "bill", id: b.id, name: b.name, amount: +b.amount || 0, due, paid: b.paidFor === monthOf(due) });
   }
+  // Paying a card down before its statement closes lowers the balance reported to the credit bureaus.
+  for (const a of d.accounts) {
+    if (a.type !== "credit" || !a.statementDay || !(+a.balance > 0)) continue;
+    const closes = nextDue(+a.statementDay, today), payBy = addDays(closes, -3);
+    if (payBy > until || closes < today) continue;
+    out.push({ kind: "statement", id: a.id, name: "Pay down " + a.name, amount: 0, balance: +a.balance || 0, due: payBy < today ? today : payBy, closes, paid: a.paidDownFor === closes });
+  }
   for (const a of d.accounts) {
     if (a.type !== "credit" || !a.dueDay) continue;
     const due = nextDue(+a.dueDay, today);
@@ -83,7 +90,7 @@ export function upcoming(d, days = 14) {
 
 // ---------- Merchants ----------
 const PREFIX = /^(POS |DEBIT CARD PURCHASE |DEBIT PURCHASE |PURCHASE AUTHORIZED ON \d\d\/\d\d |PURCHASE |CHECKCARD \d* ?|CARD PURCHASE |RECURRING PAYMENT |PREAUTHORIZED DEBIT |ACH DEBIT |SQ ?\*|TST\* ?|PAYPAL \*|PP\*|IN \*|SP \* ?|DD \*|APL\* ?|AMZN MKTP |)/;
-const STATES = new Set("AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC ON BC AB QC".split(" "));
+const STATES = new Set("AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC ON BC AB QC MB SK NS NB NL PE YT NT NU".split(" "));
 export function merchantOf(desc) {
   const up = String(desc || "").toUpperCase().trim();
   if (/AMZN|AMAZON/.test(up)) return /PRIME/.test(up) ? "Amazon Prime" : "Amazon";
