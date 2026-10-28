@@ -32,6 +32,33 @@ function bindTxnRows(root) {
 const topbar = (title, kicker, actions = "") => `<div class="topbar"><div>${kicker ? `<div class="label">${esc(kicker)}</div>` : ""}<h1>${esc(title)}</h1></div><div class="actions">${actions}</div></div>`;
 
 // ====================================================== HOME
+// One import slot per statement Jas downloads. Each finds its account by name, or creates it on first use.
+const SLOTS = [
+  { key: "td", short: "TD", name: "TD Chequing", type: "bank", color: "#2e8540", match: /\btd\b/i, how: "EasyWeb › account › Download" },
+  { key: "pc", short: "PC", name: "PC Mastercard", type: "credit", color: "#d93a2b", match: /\bpc\b|president/i, how: "pcfinancial.ca › Transactions › Download" },
+  { key: "tri", short: "▲", name: "Triangle Mastercard", type: "credit", color: "#c2477a", match: /triangle|canadian tire|ctfs/i, how: "Triangle app or website › Transactions › Download" }
+];
+const slotAcct = (d, sl) => d.accounts.find(a => a.slot === sl.key) || d.accounts.find(a => a.type === sl.type && sl.match.test(a.name));
+function slotsHtml(d) {
+  return `<div class="card"><h2>Add a statement</h2><div class="list">${SLOTS.map(sl => {
+    const a = slotAcct(d, sl), ts = a ? d.txns.filter(t => t.acct === a.id && t.key) : [];
+    const last = ts.reduce((m, t) => (t.date > m ? t.date : m), "");
+    return `<label class="item" style="cursor:pointer"><span class="avatar" style="background:${esc(a?.color || sl.color)};color:#fff">${sl.short}</span>
+      <span class="grow"><div class="title">${esc(a?.name || sl.name)}</div><div class="sub">${last ? "Has transactions up to " + esc(niceDate(last, true)) : esc(sl.how)}</div></span>
+      <span class="btn small primary">Choose file</span><input type="file" data-slot="${sl.key}" accept=".csv,.ofx,.qfx,.txt,text/csv" hidden></label>`;
+  }).join("")}</div></div>`;
+}
+function bindSlots(root) {
+  root.querySelectorAll("[data-slot]").forEach(inp => (inp.onchange = () => {
+    const f = inp.files[0], sl = SLOTS.find(x => x.key === inp.dataset.slot);
+    if (!f || !sl) return;
+    let a = slotAcct(D(), sl);
+    if (!a) { a = { id: uid(), name: sl.name, type: sl.type, color: sl.color, slot: sl.key }; store.update(x => { x.accounts.push(a); }); }
+    else if (!a.slot) store.update(x => { const y = x.accounts.find(v => v.id === a.id); if (y) y.slot = sl.key; });
+    openImport(a.id, f);
+  }));
+}
+
 const home = {
   html() {
     const d = D(), s = A.safeToday(d), today = todayStr();
@@ -69,7 +96,7 @@ const home = {
     const goals = d.goals.length ? `<div class="card"><div class="row"><h2>Savings goals</h2><button class="link" data-to="budget">All</button></div>${d.goals.slice(0, 3).map(g => `
       <div class="stack" style="gap:4px"><div class="row small"><b>${esc(g.name)}</b><span class="num">${money(+g.saved || 0, 0)} of ${money(+g.target || 0, 0)}</span></div>${meter((+g.saved || 0) / (+g.target || 1), "")}</div>`).join("")}</div>` : "";
     return topbar("Hi Jas", niceDate(today), `<button class="icon-btn" data-act="lock" aria-label="Lock">${icon("lock")}</button><button class="icon-btn" data-act="settings" aria-label="Settings">${icon("gear")}</button>`)
-      + setup + hero + alertsHtml + week + upHtml
+      + setup + hero + alertsHtml + slotsHtml(d) + week + upHtml
       + `<div class="card"><div class="row"><h2>Recent</h2><button class="link" data-to="activity">See all</button></div><div class="list">${recent.length ? recent.map(txnRow).join("") : `<div class="empty">No transactions yet. Import a statement or tap + to log a purchase.</div>`}</div></div>`
       + goals;
   },
@@ -88,6 +115,7 @@ const home = {
       });
       toast("Marked as paid");
     }));
+    bindSlots(root);
     bindTxnRows(root);
   }
 };
@@ -567,7 +595,7 @@ async function exportCalendar() {
 }
 
 // ====================================================== IMPORT
-export function openImport(acctId) {
+export function openImport(acctId, file) {
   const d = D();
   const statementAccts = d.accounts.filter(a => a.type !== "cash");
   sheet("Import a statement", `
@@ -585,8 +613,8 @@ export function openImport(acctId) {
       if (sel.value !== "__new") return store.acctById(sel.value);
       return { id: "new", name: b.querySelector("#iNN").value.trim() || "New account", type: b.querySelector("#iNT").value };
     };
-    b.querySelector("#iF").onchange = async e => {
-      const f = e.target.files[0]; if (!f) return;
+    const load = async f => {
+      if (!f) return;
       const text = await f.text();
       if (/<OFX>|OFXHEADER|<STMTTRN>/i.test(text)) state = { kind: "ofx", raw: imp.parseOFX(text) };
       else {
@@ -598,6 +626,8 @@ export function openImport(acctId) {
       }
       build();
     };
+    b.querySelector("#iF").onchange = e => load(e.target.files[0]);
+    if (file) { b.querySelector("#iF").closest(".field").hidden = true; load(file); }
     function build() {
       const acc = account();
       const raw = state.kind === "ofx" ? state.raw : imp.rowsFromCSV(state.p, state.mapping, state.dateOrder, state.out);
