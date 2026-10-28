@@ -1,8 +1,9 @@
 // Claude inside the app. Calls go straight from the phone to the Claude API with Jas's own key.
-// Claude gets a summary (totals by category and merchant, budgets, cards, goals), never raw statements.
+// Claude gets a summary (totals by category and merchant, budgets, cards, goals). The one exception is
+// readStatement, which sends the statement pictures or PDF that Jas chooses to have read.
 import { Anthropic } from "../vendor/anthropic.js";
 import { insights, totalBudget, safeToday, upcoming } from "./analysis.js";
-import { round2, todayStr, monthLabel } from "./util.js";
+import { round2, todayStr, monthLabel, toB64 } from "./util.js";
 
 export const MODELS = [
   { id: "claude-opus-5-5", label: "Claude Opus 5.5 (best advice, a few cents per review)" },
@@ -105,6 +106,67 @@ export function explainError(e) {
   if (e instanceof Anthropic.APIConnectionError) return "Can't reach Claude. Check your internet connection.";
   if (e instanceof Anthropic.APIError) return "Claude had a problem (" + e.status + "). Try again shortly.";
   return e?.message || "Something went wrong talking to Claude.";
+}
+
+// ---------- Reading a statement from pictures or a PDF ----------
+const STATEMENT_SCHEMA = {
+  type: "object",
+  properties: {
+    transactions: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          date: { type: "string", description: "Transaction date as YYYY-MM-DD" },
+          description: { type: "string", description: "Merchant or description exactly as printed" },
+          amount: { type: "number", description: "Positive for money out (purchases, fees, interest, withdrawals). Negative for money in (payments to the card, refunds, deposits)." }
+        },
+        required: ["date", "description", "amount"],
+        additionalProperties: false
+      }
+    }
+  },
+  required: ["transactions"],
+  additionalProperties: false
+};
+
+// Photos from the iPhone camera can be HEIC and very large: redraw as a JPEG no wider than 2000px.
+async function imageBlock(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((ok, bad) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => bad(new Error("That picture couldn't be opened.")); i.src = url; });
+    const k = Math.min(1, 2000 / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement("canvas");
+    c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    const blob = await new Promise(ok => c.toBlob(ok, "image/jpeg", 0.85));
+    return { type: "image", source: { type: "base64", media_type: "image/jpeg", data: toB64(await blob.arrayBuffer()) } };
+  } finally { URL.revokeObjectURL(url); }
+}
+export const isPicture = f => /^image\//.test(f.type) || /\.(pdf|jpe?g|png|heic|heif|webp)$/i.test(f.name) || f.type === "application/pdf";
+
+// Returns [{date, desc, amt}] in the same shape as a parsed CSV.
+export async function readStatement(d, files) {
+  const model = d.settings.model || "claude-opus-5-5";
+  const blocks = [];
+  for (const f of files) {
+    if (f.type === "application/pdf" || /\.pdf$/i.test(f.name)) blocks.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: toB64(await f.arrayBuffer()) } });
+    else blocks.push(await imageBlock(f));
+  }
+  blocks.push({ type: "text", text: `These are pages or screenshots of one bank or credit card statement. Today is ${todayStr()}.
+List every transaction exactly once, in order. Skip balances, subtotals, totals, summaries and repeated rows that appear on more than one page or screenshot.
+If a date has no year, use the statement period to work it out; otherwise assume the most recent date not after today.` });
+  const stream = client(d).beta.messages.stream({
+    model, max_tokens: 32000,
+    output_config: { format: { type: "json_schema", schema: STATEMENT_SCHEMA } },
+    messages: [{ role: "user", content: blocks }], ...extras(model)
+  });
+  const msg = await stream.finalMessage();
+  if (msg.stop_reason === "refusal") throw new Error("Claude declined to read that. Try a clearer picture.");
+  if (msg.stop_reason === "max_tokens") throw new Error("That statement is too long to read at once. Try fewer pages.");
+  const text = msg.content.filter(b => b.type === "text").map(b => b.text).join("");
+  const out = JSON.parse(text).transactions || [];
+  return out.filter(t => /^\d{4}-\d{2}-\d{2}$/.test(t.date) && isFinite(+t.amount) && t.description).map(t => ({ date: t.date, desc: String(t.description).trim(), amt: round2(+t.amount) }));
 }
 
 // Pull the {"budget": {...}} block out of an answer, mapped to category ids.

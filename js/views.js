@@ -38,6 +38,7 @@ const SLOTS = [
   { key: "pc", short: "PC", name: "PC Mastercard", type: "credit", color: "#d93a2b", match: /\bpc\b|president/i, how: "pcfinancial.ca › Transactions › Download" },
   { key: "tri", short: "▲", name: "Triangle Mastercard", type: "credit", color: "#c2477a", match: /triangle|canadian tire|ctfs/i, how: "Triangle app or website › Transactions › Download" }
 ];
+const STATEMENT_TYPES = ".csv,.ofx,.qfx,.txt,text/csv,.pdf,application/pdf,image/*";
 const slotAcct = (d, sl) => d.accounts.find(a => a.slot === sl.key) || d.accounts.find(a => a.type === sl.type && sl.match.test(a.name));
 function slotsHtml(d) {
   return `<div class="card"><h2>Add a statement</h2><div class="list">${SLOTS.map(sl => {
@@ -45,17 +46,17 @@ function slotsHtml(d) {
     const last = ts.reduce((m, t) => (t.date > m ? t.date : m), "");
     return `<label class="item" style="cursor:pointer"><span class="avatar" style="background:${esc(a?.color || sl.color)};color:#fff">${sl.short}</span>
       <span class="grow"><div class="title">${esc(a?.name || sl.name)}</div><div class="sub">${last ? "Has transactions up to " + esc(niceDate(last, true)) : esc(sl.how)}</div></span>
-      <span class="btn small primary">Choose file</span><input type="file" data-slot="${sl.key}" accept=".csv,.ofx,.qfx,.txt,text/csv" hidden></label>`;
+      <span class="btn small primary">Choose file</span><input type="file" data-slot="${sl.key}" multiple accept="${STATEMENT_TYPES}" hidden></label>`;
   }).join("")}</div></div>`;
 }
 function bindSlots(root) {
   root.querySelectorAll("[data-slot]").forEach(inp => (inp.onchange = () => {
-    const f = inp.files[0], sl = SLOTS.find(x => x.key === inp.dataset.slot);
-    if (!f || !sl) return;
+    const files = [...inp.files], sl = SLOTS.find(x => x.key === inp.dataset.slot);
+    if (!files.length || !sl) return;
     let a = slotAcct(D(), sl);
     if (!a) { a = { id: uid(), name: sl.name, type: sl.type, color: sl.color, slot: sl.key }; store.update(x => { x.accounts.push(a); }); }
     else if (!a.slot) store.update(x => { const y = x.accounts.find(v => v.id === a.id); if (y) y.slot = sl.key; });
-    openImport(a.id, f);
+    openImport(a.id, files);
   }));
 }
 
@@ -731,14 +732,14 @@ async function exportCalendar() {
 }
 
 // ====================================================== IMPORT
-export function openImport(acctId, file) {
+export function openImport(acctId, files) {
   const d = D();
   const statementAccts = d.accounts.filter(a => a.type !== "cash");
   sheet("Import a statement", `
-    <p class="muted small" style="margin:0">On your bank or card's website or app, look for <b>Download transactions</b> or <b>Export</b> and choose <b>CSV</b> (or OFX/QFX). The file is read on this phone only.</p>
+    <p class="muted small" style="margin:0">Best: a <b>CSV</b> from your bank's website (Download or Export). It's read on this phone only.<br>Or choose <b>photos, screenshots or a PDF</b> of the statement and Claude will read it. Those pages are sent to Claude with your key.</p>
     <label class="field"><span>Account</span><select class="input" id="iA">${opts(statementAccts.map(a => [a.id, a.name]), acctId || statementAccts[0]?.id)}<option value="__new">+ Add a new account…</option></select></label>
     <div id="iNew" class="grid2" hidden><input class="input" id="iNN" placeholder="Account name"><select class="input" id="iNT">${opts([["credit", "Credit card"], ["bank", "Bank account"]], "credit")}</select></div>
-    <label class="field"><span>Statement file</span><input class="input" id="iF" type="file" accept=".csv,.ofx,.qfx,.txt,text/csv"></label>
+    <label class="field"><span>Statement file</span><input class="input" id="iF" type="file" multiple accept="${STATEMENT_TYPES}"></label>
     <div id="iStep2"></div>`, (b) => {
     const sel = b.querySelector("#iA");
     const syncNew = () => (b.querySelector("#iNew").hidden = sel.value !== "__new");
@@ -749,8 +750,19 @@ export function openImport(acctId, file) {
       if (sel.value !== "__new") return store.acctById(sel.value);
       return { id: "new", name: b.querySelector("#iNN").value.trim() || "New account", type: b.querySelector("#iNT").value };
     };
-    const load = async f => {
+    const load = async files => {
+      files = [...(files || [])];
+      const f = files[0];
       if (!f) return;
+      if (files.every(claude.isPicture)) {
+        if (!d.settings.apiKey) return toast("Add your Claude key in Settings to read pictures and PDFs");
+        const step = b.querySelector("#iStep2");
+        step.innerHTML = `<div class="banner info"><span>Claude is reading ${files.length > 1 ? files.length + " pages" : "your statement"}… this can take a minute.</span></div>`;
+        try { state = { kind: "claude", raw: await claude.readStatement(d, files) }; }
+        catch (e) { step.innerHTML = ""; return toast(e instanceof SyntaxError ? "Claude couldn't read that. Try a clearer picture." : claude.explainError(e)); }
+        if (!state.raw.length) { step.innerHTML = ""; state = null; return toast("No transactions found in that picture"); }
+        return build();
+      }
       const text = await f.text();
       if (/<OFX>|OFXHEADER|<STMTTRN>/i.test(text)) state = { kind: "ofx", raw: imp.parseOFX(text) };
       else {
@@ -762,11 +774,11 @@ export function openImport(acctId, file) {
       }
       build();
     };
-    b.querySelector("#iF").onchange = e => load(e.target.files[0]);
-    if (file) { b.querySelector("#iF").closest(".field").hidden = true; load(file); }
+    b.querySelector("#iF").onchange = e => load(e.target.files);
+    if (files) { b.querySelector("#iF").closest(".field").hidden = true; load(files); }
     function build() {
       const acc = account();
-      const raw = state.kind === "ofx" ? state.raw : imp.rowsFromCSV(state.p, state.mapping, state.dateOrder, state.out);
+      const raw = state.kind !== "csv" ? state.raw : imp.rowsFromCSV(state.p, state.mapping, state.dateOrder, state.out);
       state.rows = imp.prepare(raw, acc, d);
       paint();
     }
