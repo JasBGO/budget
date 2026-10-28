@@ -124,9 +124,16 @@ const STATEMENT_SCHEMA = {
         required: ["date", "description", "amount"],
         additionalProperties: false
       }
-    }
+    },
+    // Card details printed on the statement. Empty string when the statement doesn't show it.
+    statement_date: { type: "string", description: "Statement (closing) date as YYYY-MM-DD, or empty" },
+    payment_due_date: { type: "string", description: "Payment due date as YYYY-MM-DD, or empty" },
+    new_balance: { type: "string", description: "New/closing balance owed, digits only like 1840.25, or empty" },
+    minimum_payment: { type: "string", description: "Minimum payment due, digits only, or empty" },
+    credit_limit: { type: "string", description: "Credit limit, digits only, or empty" },
+    purchase_apr: { type: "string", description: "Annual interest rate on purchases in percent, like 20.99, or empty" }
   },
-  required: ["transactions"],
+  required: ["transactions", "statement_date", "payment_due_date", "new_balance", "minimum_payment", "credit_limit", "purchase_apr"],
   additionalProperties: false
 };
 
@@ -145,7 +152,7 @@ async function imageBlock(file) {
 }
 export const isPicture = f => /^image\//.test(f.type) || /\.(pdf|jpe?g|png|heic|heif|webp)$/i.test(f.name) || f.type === "application/pdf";
 
-// Returns [{date, desc, amt}] in the same shape as a parsed CSV.
+// Returns { rows: [{date, desc, amt}] in the same shape as a parsed CSV, info: card details found or null }.
 export async function readStatement(d, files) {
   const model = d.settings.model || "claude-opus-5-5";
   const blocks = [];
@@ -165,8 +172,11 @@ If a date has no year, use the statement period to work it out; otherwise assume
   if (msg.stop_reason === "refusal") throw new Error("Claude declined to read that. Try a clearer picture.");
   if (msg.stop_reason === "max_tokens") throw new Error("That statement is too long to read at once. Try fewer pages.");
   const text = msg.content.filter(b => b.type === "text").map(b => b.text).join("");
-  const out = JSON.parse(text).transactions || [];
-  return out.filter(t => /^\d{4}-\d{2}-\d{2}$/.test(t.date) && isFinite(+t.amount) && t.description).map(t => ({ date: t.date, desc: String(t.description).trim(), amt: round2(+t.amount) }));
+  const res = JSON.parse(text), out = res.transactions || [];
+  const day = v => /^\d{4}-\d{2}-\d{2}$/.test(v || "") ? v : null, num = v => { const n = parseFloat(String(v || "").replace(/[^\d.]/g, "")); return isFinite(n) ? n : null; };
+  const info = { statementDate: day(res.statement_date), dueDate: day(res.payment_due_date), balance: num(res.new_balance), minPay: num(res.minimum_payment), limit: num(res.credit_limit), apr: num(res.purchase_apr) };
+  const rows = out.filter(t => /^\d{4}-\d{2}-\d{2}$/.test(t.date) && isFinite(+t.amount) && t.description).map(t => ({ date: t.date, desc: String(t.description).trim(), amt: round2(+t.amount) }));
+  return { rows, info: Object.values(info).some(v => v != null) ? info : null };
 }
 
 // Pull the {"budget": {...}} block out of an answer, mapped to category ids.

@@ -683,6 +683,21 @@ function openBill(id) {
   });
 }
 
+// Card details read from a statement. The balance only replaces an older one, minus any payment recorded since.
+function applyStatementInfo(c, inf) {
+  if (inf.dueDate) c.dueDay = +inf.dueDate.slice(8);
+  if (inf.statementDate) c.statementDay = +inf.statementDate.slice(8);
+  if (inf.minPay != null) c.minPay = inf.minPay;
+  if (inf.limit != null) c.limit = inf.limit;
+  if (inf.apr != null) c.apr = inf.apr;
+  const asOf = inf.statementDate || todayStr();
+  if (inf.balance != null && !(c.balanceAsOf > asOf)) {
+    const paidSince = c.lastPaid && c.lastPaid.date > asOf ? c.lastPaid.amt : 0;
+    c.balance = round2(Math.max(0, inf.balance - paidSince));
+    c.balanceAsOf = asOf;
+  }
+}
+
 // Record a card payment: lowers the balance owed and ticks off this month.
 function openPayCard(id, suggested) {
   const a = store.acctById(id), d = D();
@@ -758,7 +773,7 @@ export function openImport(acctId, files) {
         if (!d.settings.apiKey) return toast("Add your Claude key in Settings to read pictures and PDFs");
         const step = b.querySelector("#iStep2");
         step.innerHTML = `<div class="banner info"><span>Claude is reading ${files.length > 1 ? files.length + " pages" : "your statement"}… this can take a minute.</span></div>`;
-        try { state = { kind: "claude", raw: await claude.readStatement(d, files) }; }
+        try { const r = await claude.readStatement(d, files); state = { kind: "claude", raw: r.rows, info: r.info, saveInfo: true }; }
         catch (e) { step.innerHTML = ""; return toast(e instanceof SyntaxError ? "Claude couldn't read that. Try a clearer picture." : claude.explainError(e)); }
         if (!state.raw.length) { step.innerHTML = ""; state = null; return toast("No transactions found in that picture"); }
         return build();
@@ -792,7 +807,11 @@ export function openImport(acctId, files) {
         <div class="grid2"><label class="field"><span>Dates are</span><select class="input" id="iDO">${opts([["mdy", "Month/Day/Year"], ["dmy", "Day/Month/Year"]], state.dateOrder)}</select></label>
         <label class="field"><span>Purchases show as</span><select class="input" id="iSign">${opts([["neg", "Minus amounts"], ["pos", "Plus amounts"]], state.out)}</select></label></div></div></details>` : "";
       const uncats = [...new Set(inc.filter(r => r.kind === "spend" && r.cat === "other").map(r => r.merchant))];
-      step.innerHTML = mapping + `
+      const info = state.info, credit = account().type === "credit";
+      const infoCard = info && credit ? `<div class="card" style="gap:6px"><h3 style="margin:0">Card details on this statement</h3>
+        <div class="small">${[info.dueDate && "Payment due <b>" + esc(niceDate(info.dueDate, true)) + "</b>", info.statementDate && "Statement date " + esc(niceDate(info.statementDate, true)), info.balance != null && "Balance " + money(info.balance), info.minPay != null && "Minimum " + money(info.minPay), info.limit != null && "Limit " + money(info.limit, 0), info.apr != null && info.apr + "% interest"].filter(Boolean).join(" · ")}</div>
+        <label class="row small" style="justify-content:flex-start;gap:8px"><input type="checkbox" id="iInfo" ${state.saveInfo ? "checked" : ""} style="width:20px;height:20px;accent-color:var(--accent)"> Save these to the card for due-date reminders</label></div>` : "";
+      step.innerHTML = mapping + infoCard + `
         <div class="banner info"><span><b>${fresh.length}</b> new transaction${fresh.length === 1 ? "" : "s"}${dup ? ` · ${dup} already imported` : ""} · ${rows.filter(r => r.kind === "transfer").length} card payments or transfers (not counted as spending)</span></div>
         ${uncats.length && d.settings.apiKey ? `<button class="btn block" id="iClaude">Let Claude sort ${uncats.length} unknown place${uncats.length === 1 ? "" : "s"}</button>` : ""}
         <button class="btn primary block" id="iGo" ${inc.length ? "" : "disabled"}>Import ${inc.length} transaction${inc.length === 1 ? "" : "s"}</button>
@@ -804,6 +823,7 @@ export function openImport(acctId, files) {
               <span class="grid2"><select class="input" data-kind="${i}" style="padding:6px 8px;font-size:14px">${opts([["spend", r.amt < 0 ? "Refund" : "Spending"], ["income", "Money in"], ["transfer", "Transfer / payment"]], r.kind)}</select>
               ${r.kind === "spend" ? `<select class="input" data-cat="${i}" style="padding:6px 8px;font-size:14px">${catOpts(r.cat)}</select>` : "<span></span>"}</span></span></div>`).join("")}
           ${rows.length > 400 ? `<div class="empty">Showing the first 400 of ${rows.length}. All ${inc.length} selected will be imported.</div>` : ""}</div>`;
+      const ii = step.querySelector("#iInfo"); if (ii) ii.onchange = () => (state.saveInfo = ii.checked);
       step.querySelectorAll("[data-map]").forEach(s => (s.onchange = () => { state.mapping = { ...state.mapping, [s.dataset.map]: +s.value }; build(); }));
       const dO = step.querySelector("#iDO"); if (dO) dO.onchange = () => { state.dateOrder = dO.value; build(); };
       const sg = step.querySelector("#iSign"); if (sg) sg.onchange = () => { state.out = sg.value; build(); };
@@ -836,6 +856,8 @@ export function openImport(acctId, files) {
             if (r.learn && r.cat) x.rules[r.merchant.toUpperCase()] = r.cat;
           }
           if (state.kind === "csv") x.settings.dateOrder = state.dateOrder;
+          const inf = state.info, card = x.accounts.find(y => y.id === acc.id);
+          if (inf && state.saveInfo && card?.type === "credit") applyStatementInfo(card, inf);
         });
         closeSheet();
         announceAlerts(before, `Imported ${inc.length} transactions into ${acc.name}`);
